@@ -379,24 +379,22 @@ class TodoTimerApp:
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
 
-        columns = ("done", "priority", "created", "spent", "lastworked", "task")
+        columns = ("done", "priority", "created", "lastworked", "spent", "task")
         self.tree = ttk.Treeview(
             table_frame, columns=columns, show="headings", selectmode="browse"
         )
-        self.tree.heading("done", text="Done")
-        self.tree.heading("priority", text="Priority")
-        self.tree.heading("created", text="Created")
-        self.tree.heading("spent", text="Tracked")
-        self.tree.heading("lastworked", text="Last worked")
+        self.tree.heading("done", text="✔️")
+        self.tree.heading("priority", text="⚑")
+        self.tree.heading("created", text="🌱")
+        self.tree.heading("lastworked", text="⚒")
+        self.tree.heading("spent", text="⏱️")
         self.tree.heading("task", text="Task")
-        self.tree.column("done", width=62, anchor="center", stretch=False)
-        self.tree.column("priority", width=74, anchor="center", stretch=False)
-        self.tree.column("created", width=110, anchor="center", stretch=False)
-        self.tree.column("spent", width=100, anchor="center", stretch=False)
-        self.tree.column(
-            "lastworked", width=165, anchor="center", stretch=False
-        )
-        self.tree.column("task", width=600, anchor="w")
+        self.tree.column("done", width=20, anchor="center", stretch=False)
+        self.tree.column("priority", width=20, anchor="center", stretch=False)
+        self.tree.column("created", width=80, anchor="center", stretch=False)
+        self.tree.column("lastworked", width=80, anchor="center", stretch=False)
+        self.tree.column("spent", width=70, anchor="center", stretch=False)
+        self.tree.column("task", width=600, anchor="w", stretch=True)
         self.tree.grid(row=0, column=0, sticky="nsew")
         self.tree.bind("<Double-1>", lambda event: self.edit_selected())
         self.tree.bind("<Return>", lambda event: self.edit_selected())
@@ -765,9 +763,9 @@ class TodoTimerApp:
                 if active
             )
             last_worked = (
-                item.last_worked_at.strftime("%Y-%m-%d %H:%M:%S")
+                item.last_worked_at.strftime("%Y-%m-%d")
                 if item.last_worked_at
-                else ""
+                else "not started"
             )
             spent = format_duration(item.total_elapsed_seconds())
             task_text = item.description
@@ -781,8 +779,8 @@ class TodoTimerApp:
                     "x" if item.completed else "",
                     item.priority or "",
                     item.creation_date or "",
-                    spent + (" ▶" if item.timer_started_at else ""),
                     last_worked,
+                    spent + (" ▶" if item.timer_started_at else ""),
                     task_text,
                 ),
                 tags=tags,
