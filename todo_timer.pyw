@@ -126,7 +126,6 @@ class TaskDialog(tk.Toplevel):
 
         self._toggle_completion()
         self.bind("<Escape>", lambda event: self.destroy())
-        # TODO: another return
         self.bind("<Control-Return>", lambda event: self._on_save())
         self.description_text.focus_set()
         self.grab_set()
