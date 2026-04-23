@@ -422,25 +422,32 @@ class TodoTimerApp:
         self.root.bind_all("<Control-o>", lambda event: self.choose_file())
         self.root.bind_all("<Control-s>", lambda event: self.save_file())
         self.root.bind_all("<F5>", lambda event: self.reload_file())
-        # self.root.bind_all(
-        #     "<Control-Return>", lambda event: self.new_task_dialog()
-        # )
-        self.root.bind_all("<F2>", lambda event: self.edit_selected())
-        self.root.bind_all("<Delete>", lambda event: self.delete_selected())
-        self.root.bind_all("<Alt-Up>", lambda event: self.increase_priority())
-        self.root.bind_all("<Alt-Down>", lambda event: self.decrease_priority())
+        self.root.bind_all(
+            "<Control-Return>", lambda event: self.new_task_dialog()
+        )
+        self.tree.bind("<F2>", lambda event: self.edit_selected() or "break")
+        self.tree.bind(
+            "<Delete>", lambda event: self.delete_selected() or "break"
+        )
+        self.tree.bind(
+            "<Alt-Up>", lambda event: self.increase_priority() or "break"
+        )
+        self.tree.bind(
+            "<Alt-Down>", lambda event: self.decrease_priority() or "break"
+        )
         self.root.bind_all("<Alt-Left>", lambda event: self.clear_priority())
         self.root.bind_all("<Alt-Right>", lambda event: self.clear_priority())
-        self.root.bind_all(
+        self.tree.bind(
             "x",
             lambda event: (
                 self.toggle_complete_selected()
                 if self._tree_has_focus()
                 else None
-            ),
+            )
+            or "break",
         )
-        self.root.bind_all(
-            "<Control-t>", lambda event: self.toggle_timer_selected()
+        self.tree.bind(
+            "<Control-t>", lambda event: self.toggle_timer_selected() or "break"
         )
         self.root.bind_all("<Control-l>", lambda event: self.open_first_link())
 
