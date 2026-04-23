@@ -126,6 +126,7 @@ class TaskDialog(tk.Toplevel):
 
         self._toggle_completion()
         self.bind("<Escape>", lambda event: self.destroy())
+        # TODO: another return
         self.bind("<Control-Return>", lambda event: self._on_save())
         self.description_text.focus_set()
         self.grab_set()
@@ -241,7 +242,6 @@ class TodoTimerApp:
         menu.add_cascade(label="File", menu=file_menu)
 
         task_menu = tk.Menu(menu, tearoff=False)
-        # task_menu.add_command(label="New task...", accelerator="Ctrl+Enter", command=self.new_task_dialog)
         task_menu.add_command(
             label="Edit task...", accelerator="F2", command=self.edit_selected
         )
@@ -336,7 +336,10 @@ class TodoTimerApp:
             row=0, column=3, padx=(0, 6), pady=6
         )
 
-        add_frame = ttk.LabelFrame(outer, text="Quick add")
+        add_frame = ttk.LabelFrame(
+            outer,
+            text="<Ctrl+n> to add new task | <Ctrl+Enter> when done | <Esc> to cancel",
+        )
         add_frame.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         add_frame.columnconfigure(0, weight=1)
         self.quick_add_var = tk.StringVar()
@@ -344,13 +347,13 @@ class TodoTimerApp:
             add_frame, textvariable=self.quick_add_var
         )
         self.quick_add_entry.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
-        self.quick_add_entry.bind("<Return>", lambda event: self.quick_add())
-        ttk.Button(add_frame, text="Add", command=self.quick_add).grid(
-            row=0, column=1, padx=(0, 6), pady=6
+        self.quick_add_entry.bind(
+            "<Control-Return>", lambda event: self.quick_add() or "break"
         )
-        # ttk.Button(
-        #     add_frame, text="New dialog", command=self.new_task_dialog
-        # ).grid(row=0, column=2, padx=(0, 6), pady=6)
+        self.quick_add_entry.bind(
+            "<Escape>",
+            lambda event: self.tree.focus_set() or "break",
+        )
 
         button_frame = ttk.Frame(outer)
         button_frame.grid(row=2, column=0, sticky="ew", pady=(8, 8))
@@ -397,7 +400,6 @@ class TodoTimerApp:
         self.tree.column("task", width=600, anchor="w", stretch=True)
         self.tree.grid(row=0, column=0, sticky="nsew")
         self.tree.bind("<Double-1>", lambda event: self.edit_selected())
-        self.tree.bind("<Return>", lambda event: self.edit_selected())
 
         y_scroll = ttk.Scrollbar(
             table_frame, orient="vertical", command=self.tree.yview
@@ -423,7 +425,8 @@ class TodoTimerApp:
         self.root.bind_all("<Control-s>", lambda event: self.save_file())
         self.root.bind_all("<F5>", lambda event: self.reload_file())
         self.root.bind_all(
-            "<Control-Return>", lambda event: self.new_task_dialog()
+            "<Control-n>",
+            lambda event: self.quick_add_entry.focus_set() or "break",
         )
         self.tree.bind("<F2>", lambda event: self.edit_selected() or "break")
         self.tree.bind(
@@ -467,7 +470,6 @@ class TodoTimerApp:
                 "  active:YYYY-MM-DD-HH-MM-SS\n\n"
                 "Shortcuts:\n"
                 "  Ctrl+O open file\n"
-                "  Ctrl+Enter new task\n"
                 "  F2 edit\n"
                 "  Alt+Up / Alt+Down change priority\n"
                 "  Ctrl+T start/stop timer\n"
@@ -541,38 +543,11 @@ class TodoTimerApp:
             self.store.save()
             self.quick_add_var.set("")
             self.refresh_tree(select_item_id=item.id)
+            self.tree.focus_set()
             self.status_var.set("Task added.")
         except Exception as exc:
             messagebox.showerror(
                 APP_TITLE, f"Could not add task:\n{exc}", parent=self.root
-            )
-
-    def new_task_dialog(self) -> None:
-        try:
-            self.ensure_file_loaded()
-        except Exception as exc:
-            messagebox.showerror(APP_TITLE, str(exc), parent=self.root)
-            return
-        dialog = TaskDialog(self.root, "New task")
-        self.root.wait_window(dialog)
-        if not dialog.result:
-            return
-        try:
-            item = TodoItem(
-                description=str(dialog.result["description"]),
-                priority=dialog.result.get("priority") or None,
-                creation_date=dialog.result.get("creation_date")
-                or self.today_string(),
-                completed=bool(dialog.result.get("completed")),
-                completion_date=dialog.result.get("completion_date") or None,
-            )
-            self.store.add_item(item)
-            self.store.save()
-            self.refresh_tree(select_item_id=item.id)
-            self.status_var.set("Task created.")
-        except Exception as exc:
-            messagebox.showerror(
-                APP_TITLE, f"Could not create task:\n{exc}", parent=self.root
             )
 
     def selected_item(self) -> TodoItem | None:
