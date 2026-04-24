@@ -317,35 +317,24 @@ class TodoTimerApp:
         outer = ttk.Frame(self.root, padding=8)
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1)
-        outer.rowconfigure(3, weight=1)
+        outer.rowconfigure(1, weight=1)
 
-        file_frame = ttk.LabelFrame(outer, text="todo.txt file")
-        file_frame.grid(row=0, column=0, sticky="ew")
-        file_frame.columnconfigure(0, weight=1)
-        ttk.Entry(
-            file_frame, textvariable=self.path_var, state="readonly"
-        ).grid(row=0, column=0, sticky="ew", padx=6, pady=6)
-        ttk.Button(file_frame, text="Open", command=self.choose_file).grid(
-            row=0, column=1, padx=(0, 6), pady=6
-        )
-        ttk.Button(file_frame, text="Reload", command=self.reload_file).grid(
-            row=0, column=2, padx=(0, 6), pady=6
-        )
-        ttk.Button(file_frame, text="Save", command=self.save_file).grid(
-            row=0, column=3, padx=(0, 6), pady=6
-        )
-
-        add_frame = ttk.LabelFrame(
-            outer,
-            text="<Ctrl+n> to add new task | <Ctrl+Enter> when done | <Esc> to cancel",
-        )
-        add_frame.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        add_frame = ttk.Frame(outer)
+        add_frame.grid(row=0, column=0, sticky="ew", pady=(0, 0))
         add_frame.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            add_frame,
+            text="<Ctrl+n> to add new task | <Ctrl+Enter> when done | <Esc> to cancel",
+        ).grid(row=0, column=0, sticky="ew", padx=0, pady=0)
+
         self.quick_add_var = tk.StringVar()
         self.quick_add_entry = ttk.Entry(
             add_frame, textvariable=self.quick_add_var
         )
-        self.quick_add_entry.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
+        self.quick_add_entry.grid(
+            row=1, column=0, sticky="ew", padx=0, pady=(0, 5)
+        )
         self.quick_add_entry.bind(
             "<Control-Return>", lambda event: self.quick_add() or "break"
         )
@@ -354,32 +343,17 @@ class TodoTimerApp:
             lambda event: self.tree.focus_set() or "break",
         )
 
-        button_frame = ttk.Frame(outer)
-        button_frame.grid(row=2, column=0, sticky="ew", pady=(8, 8))
-        for index in range(8):
-            button_frame.columnconfigure(index, weight=0)
-        ttk.Button(button_frame, text="Edit", command=self.edit_selected).grid(
-            row=0, column=0, padx=(0, 6)
-        )
-        ttk.Button(
-            button_frame, text="Complete", command=self.toggle_complete_selected
-        ).grid(row=0, column=1, padx=(0, 6))
-        ttk.Button(
-            button_frame, text="Delete", command=self.delete_selected
-        ).grid(row=0, column=2, padx=(0, 6))
-        ttk.Button(
-            button_frame,
-            text="Start / Stop Timer",
-            command=self.toggle_timer_selected,
-        ).grid(row=0, column=3, padx=(0, 6))
-        ttk.Button(
-            button_frame, text="Open Link", command=self.open_first_link
-        ).grid(row=0, column=4, padx=(0, 6))
-
         table_frame = ttk.Frame(outer)
-        table_frame.grid(row=3, column=0, sticky="nsew")
+        table_frame.grid(row=1, column=0, sticky="nsew")
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
+
+        shortcut_frame = ttk.Frame(outer)
+        shortcut_frame.grid(row=2, column=0, sticky="ew", pady=(8, 8))
+        ttk.Label(
+            shortcut_frame,
+            text="[Ctrl+t] start/stop timer | [F2] edit entry | [Ctrl+l] open first link | [x] mark complete | [Del] delete task",
+        ).grid(row=0, column=0, sticky="w")
 
         columns = ("done", "priority", "created", "lastworked", "spent", "task")
         self.tree = ttk.Treeview(
