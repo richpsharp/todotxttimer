@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
+from pathlib import Path
+from typing import Iterable
 import json
 import os
-from pathlib import Path
 import re
 import tempfile
+import time
 import uuid
-from typing import Iterable, Optional
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$")
@@ -46,7 +47,9 @@ def parse_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
     if not DATETIME_RE.match(value):
-        raise TodoFormatError(f"Invalid timestamp: {value!r}. Expected YYYY-MM-DD-HH-MM-SS.")
+        raise TodoFormatError(
+            f"Invalid timestamp: {value!r}. Expected YYYY-MM-DD-HH-MM-SS."
+        )
     return datetime.strptime(value, DATETIME_FMT)
 
 
@@ -90,7 +93,9 @@ class TodoItem:
         if self.priority is not None:
             self.priority = self.priority.upper()
             if len(self.priority) != 1 or not self.priority.isalpha():
-                raise TodoFormatError(f"Invalid priority {self.priority!r}. Expected A-Z.")
+                raise TodoFormatError(
+                    f"Invalid priority {self.priority!r}. Expected A-Z."
+                )
         self.creation_date = parse_date_string(self.creation_date)
         self.completion_date = parse_date_string(self.completion_date)
         self.time_spent_seconds = max(0, int(self.time_spent_seconds))
@@ -102,11 +107,19 @@ class TodoItem:
 
     @property
     def projects(self) -> list[str]:
-        return [token for token in self.description.split() if token.startswith("+") and len(token) > 1]
+        return [
+            token
+            for token in self.description.split()
+            if token.startswith("+") and len(token) > 1
+        ]
 
     @property
     def contexts(self) -> list[str]:
-        return [token for token in self.description.split() if token.startswith("@") and len(token) > 1]
+        return [
+            token
+            for token in self.description.split()
+            if token.startswith("@") and len(token) > 1
+        ]
 
     def raw_line(self) -> str:
         return serialize_todo_line(self)
@@ -165,7 +178,9 @@ class ConfigStore:
             return AppConfig()
 
     def save(self, config: AppConfig) -> None:
-        self.path.write_text(json.dumps(asdict(config), indent=2), encoding="utf-8")
+        self.path.write_text(
+            json.dumps(asdict(config), indent=2), encoding="utf-8"
+        )
 
 
 class TodoStore:
@@ -180,7 +195,11 @@ class TodoStore:
             file_path.write_text("", encoding="utf-8")
         raw_lines = file_path.read_text(encoding="utf-8").splitlines()
         self.path = file_path
-        self.items = [parse_todo_line(line, line_index=index) for index, line in enumerate(raw_lines) if line.strip()]
+        self.items = [
+            parse_todo_line(line, line_index=index)
+            for index, line in enumerate(raw_lines)
+            if line.strip()
+        ]
         return self.items
 
     def save(self) -> None:
@@ -195,10 +214,28 @@ class TodoStore:
 
     @staticmethod
     def _atomic_write(path: Path, content: str) -> None:
-        with tempfile.NamedTemporaryFile("w", delete=False, dir=path.parent, encoding="utf-8") as handle:
-            handle.write(content)
-            temp_name = handle.name
-        Path(temp_name).replace(path)
+        temp_name = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                delete=False,
+                dir=path.parent,
+                encoding="utf-8",
+            ) as handle:
+                handle.write(content)
+                temp_name = handle.name
+
+            for attempt in range(10):
+                try:
+                    Path(temp_name).replace(path)
+                    return
+                except PermissionError:
+                    if attempt == 9:
+                        raise
+                    time.sleep(0.2)
+        finally:
+            if temp_name and Path(temp_name).exists():
+                Path(temp_name).unlink()
 
     def add_from_text(self, text: str) -> TodoItem:
         item = parse_todo_line(text, line_index=len(self.items))
@@ -221,7 +258,9 @@ class TodoStore:
         for index, item in enumerate(self.items):
             item.line_index = index
 
-    def toggle_complete(self, item_id: str, today: str | None = None) -> TodoItem:
+    def toggle_complete(
+        self, item_id: str, today: str | None = None
+    ) -> TodoItem:
         item = self.get_by_id(item_id)
         if item.completed:
             item.completed = False
@@ -273,7 +312,9 @@ class TodoStore:
         item.__post_init__()
         return item
 
-    def stop_all_timers(self, except_item_id: str | None = None) -> list[TodoItem]:
+    def stop_all_timers(
+        self, except_item_id: str | None = None
+    ) -> list[TodoItem]:
         changed: list[TodoItem] = []
         for item in self.items:
             if item.id == except_item_id:
@@ -295,9 +336,13 @@ class TodoStore:
         return item
 
     def running_items(self) -> list[TodoItem]:
-        return [item for item in self.items if item.timer_started_at is not None]
+        return [
+            item for item in self.items if item.timer_started_at is not None
+        ]
 
-    def iter_sorted(self, sort_mode: str = "priority", show_completed: bool = True) -> Iterable[TodoItem]:
+    def iter_sorted(
+        self, sort_mode: str = "priority", show_completed: bool = True
+    ) -> Iterable[TodoItem]:
         items = list(self.items)
         if not show_completed:
             items = [item for item in items if not item.completed]
