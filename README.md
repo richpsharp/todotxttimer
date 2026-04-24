@@ -1,3 +1,5 @@
+<img width="1377" height="910" alt="image" src="https://github.com/user-attachments/assets/8bebd658-1690-49eb-8a51-e50e69833c43" />
+
 # TodoTimerTxt
 
 A lightweight, keyboard-driven task manager built around the simplicity of the `todo.txt` format.
