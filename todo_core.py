@@ -150,6 +150,7 @@ class TodoItem:
 @dataclass(slots=True)
 class AppConfig:
     last_file: str = ""
+    archive_file: str = ""
     window_geometry: str = ""
     sort_mode: str = "priority"
     show_completed: bool = True
@@ -211,6 +212,30 @@ class TodoStore:
         self._atomic_write(self.path, serialized)
         for index, item in enumerate(self.items):
             item.line_index = index
+
+    def archive_completed(self, archive_path: str | os.PathLike[str]) -> int:
+        if self.path is None:
+            raise RuntimeError("No todo.txt file is loaded.")
+
+        completed = [item for item in self.items if item.completed]
+        if not completed:
+            return 0
+
+        file_path = Path(archive_path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = (
+            file_path.read_text(encoding="utf-8")
+            if file_path.exists()
+            else ""
+        )
+        archive_lines = "\n".join(serialize_todo_line(item) for item in completed)
+        separator = "" if not existing or existing.endswith("\n") else "\n"
+        self._atomic_write(file_path, f"{existing}{separator}{archive_lines}\n")
+
+        completed_ids = {item.id for item in completed}
+        self.items = [item for item in self.items if item.id not in completed_ids]
+        self.save()
+        return len(completed)
 
     @staticmethod
     def _atomic_write(path: Path, content: str) -> None:
