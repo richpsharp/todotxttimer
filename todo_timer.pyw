@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ctypes
+from dataclasses import dataclass
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import webbrowser
 
 from todo_core import (
@@ -18,6 +20,111 @@ from todo_core import (
 )
 
 APP_TITLE = "TodoTimerTXT"
+DEFAULT_IDLE_TIMEOUT_MINUTES = 10
+
+
+@dataclass(slots=True)
+class IdleTimerEvent:
+    item_id: str
+    description: str
+    detected_at: datetime
+    last_activity_at: datetime
+    running_seconds_at_detection: int
+    running_seconds_at_last_activity: int
+    idle_seconds: int
+
+
+class IdleTimerDialog(tk.Toplevel):
+    def __init__(self, master: tk.Misc, event: IdleTimerEvent):
+        super().__init__(master)
+        self.title("Timer stopped after inactivity")
+        self.resizable(False, False)
+        self.transient(master)
+        self.result = "close"
+
+        body = ttk.Frame(self, padding=14)
+        body.grid(sticky="nsew")
+        body.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            body,
+            text="The running timer was stopped because no keyboard or mouse activity was detected.",
+            wraplength=520,
+        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ttk.Label(
+            body,
+            text=f"Task: {event.description}",
+            wraplength=520,
+        ).grid(row=1, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(
+            body,
+            text=(
+                f"Timer duration when stopped: "
+                f"{format_duration(event.running_seconds_at_detection)}"
+            ),
+        ).grid(row=2, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(
+            body,
+            text=(
+                f"Time at last activity: "
+                f"{format_duration(event.running_seconds_at_last_activity)}"
+            ),
+        ).grid(row=3, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(
+            body,
+            text=(
+                f"Idle time detected: {format_duration(event.idle_seconds)} "
+                f"since {event.last_activity_at:%Y-%m-%d %H:%M:%S}"
+            ),
+        ).grid(row=4, column=0, sticky="w", pady=(0, 12))
+
+        button_row = ttk.Frame(body)
+        button_row.grid(row=5, column=0, sticky="e")
+        ttk.Button(
+            button_row,
+            text="Close",
+            command=lambda: self._finish("close"),
+        ).pack(side="right")
+        ttk.Button(
+            button_row,
+            text="Reset to last activity",
+            command=lambda: self._finish("reset"),
+        ).pack(side="right", padx=(0, 8))
+        ttk.Button(
+            button_row,
+            text="Restart timer",
+            command=lambda: self._finish("restart"),
+        ).pack(side="right", padx=(0, 8))
+
+        self.protocol("WM_DELETE_WINDOW", lambda: self._finish("close"))
+        self.bind("<Escape>", lambda event_: self._finish("close"))
+        self.grab_set()
+        self.update_idletasks()
+        self.minsize(self.winfo_width(), self.winfo_height())
+
+    def _finish(self, result: str) -> None:
+        self.result = result
+        self.destroy()
+
+
+class LastInputInfo(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_uint),
+        ("dwTime", ctypes.c_uint),
+    ]
+
+
+def get_system_idle_seconds() -> int | None:
+    try:
+        last_input = LastInputInfo()
+        last_input.cbSize = ctypes.sizeof(last_input)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(last_input)):
+            return None
+        tick_count = ctypes.windll.kernel32.GetTickCount()
+        elapsed_ms = (tick_count - last_input.dwTime) & 0xFFFFFFFF
+        return max(0, int(elapsed_ms / 1000))
+    except Exception:
+        return None
 
 
 class TaskDialog(tk.Toplevel):
@@ -183,6 +290,12 @@ class TodoTimerApp:
         self.config_store = ConfigStore(APP_TITLE)
         self.config = self.config_store.load()
         self.sort_mode = self.config.sort_mode or "priority"
+        self.idle_timeout_minutes = self._normalized_idle_timeout(
+            self.config.idle_timeout_minutes
+        )
+        self.config.idle_timeout_minutes = self.idle_timeout_minutes
+        self.last_app_activity_at = datetime.now()
+        self.idle_dialog_open = False
         self.show_completed_var = tk.BooleanVar(
             value=self.config.show_completed
         )
@@ -194,12 +307,14 @@ class TodoTimerApp:
         self.config_status_var = tk.StringVar(value="")
         self.todo_status_var = tk.StringVar(value="")
         self.archive_status_var = tk.StringVar(value="")
+        self.idle_status_var = tk.StringVar(value="")
         self.running_var = tk.StringVar(value="")
 
         self._build_styles()
         self._build_menu()
         self._build_ui()
         self._bind_shortcuts()
+        self._bind_activity_tracking()
 
         if self.config.window_geometry:
             try:
@@ -326,6 +441,11 @@ class TodoTimerApp:
             variable=self.show_completed_var,
             command=self.refresh_tree,
         )
+        view_menu.add_separator()
+        view_menu.add_command(
+            label="Idle timeout...",
+            command=self.configure_idle_timeout,
+        )
         menu.add_cascade(label="View", menu=view_menu)
 
         help_menu = tk.Menu(menu, tearoff=False)
@@ -410,8 +530,11 @@ class TodoTimerApp:
         ttk.Label(status_frame, textvariable=self.status_var).grid(
             row=0, column=0, sticky="w"
         )
-        ttk.Label(status_frame, textvariable=self.running_var).grid(
+        ttk.Label(status_frame, textvariable=self.idle_status_var).grid(
             row=0, column=1, sticky="e"
+        )
+        ttk.Label(status_frame, textvariable=self.running_var).grid(
+            row=0, column=2, sticky="e", padx=(12, 0)
         )
 
         connection_frame = ttk.Frame(outer)
@@ -473,6 +596,23 @@ class TodoTimerApp:
             "<Control-t>", lambda event: self.toggle_timer_selected() or "break"
         )
         self.root.bind_all("<Control-l>", lambda event: self.open_first_link())
+
+    def _bind_activity_tracking(self) -> None:
+        for sequence in (
+            "<KeyPress>",
+            "<ButtonPress>",
+            "<ButtonRelease>",
+            "<Motion>",
+            "<MouseWheel>",
+        ):
+            self.root.bind_all(
+                sequence,
+                lambda event: self._record_app_activity(),
+                add="+",
+            )
+
+    def _record_app_activity(self) -> None:
+        self.last_app_activity_at = datetime.now()
 
     def _tree_has_focus(self) -> bool:
         focus = self.root.focus_get()
@@ -827,6 +967,32 @@ class TodoTimerApp:
         webbrowser.open(url)
         self.status_var.set(f"Opened {url}")
 
+    def configure_idle_timeout(self) -> None:
+        minutes = simpledialog.askinteger(
+            "Idle timeout",
+            "Stop a running timer after how many idle minutes?",
+            parent=self.root,
+            initialvalue=self.idle_timeout_minutes,
+            minvalue=1,
+            maxvalue=1440,
+        )
+        if minutes is None:
+            return
+        self.idle_timeout_minutes = self._normalized_idle_timeout(minutes)
+        self.config.idle_timeout_minutes = self.idle_timeout_minutes
+        try:
+            self.config_store.save(self.config)
+        except Exception as exc:
+            messagebox.showerror(
+                APP_TITLE,
+                f"Could not save idle timeout:\n{exc}",
+                parent=self.root,
+            )
+            return
+        self.status_var.set(
+            f"Idle timeout set to {self.idle_timeout_minutes} minute(s)."
+        )
+
     def on_sort_changed(self) -> None:
         self.sort_mode = self.sort_var.get()
         self.refresh_tree()
@@ -931,7 +1097,113 @@ class TodoTimerApp:
             foreground="#107c10" if archive_ok else "#8a6d00"
         )
 
+    def _update_idle_status(self) -> None:
+        if not self.store.running_items():
+            self.idle_status_var.set("")
+            return
+        idle_seconds = self._current_idle_seconds()
+        threshold_seconds = self.idle_timeout_minutes * 60
+        remaining_seconds = max(0, threshold_seconds - idle_seconds)
+        self.idle_status_var.set(
+            "Idle: "
+            f"{format_duration(idle_seconds)} | "
+            f"Pauses in: {format_duration(remaining_seconds)}"
+        )
+
+    def _current_idle_seconds(self) -> int:
+        system_idle_seconds = get_system_idle_seconds()
+        if system_idle_seconds is not None:
+            return system_idle_seconds
+        return max(0, int((datetime.now() - self.last_app_activity_at).total_seconds()))
+
+    def _check_idle_timer(self) -> None:
+        if self.idle_dialog_open:
+            return
+        running = self.store.running_items()
+        if not running:
+            return
+
+        idle_seconds = self._current_idle_seconds()
+        threshold_seconds = self.idle_timeout_minutes * 60
+        if idle_seconds < threshold_seconds:
+            return
+
+        item = running[0]
+        if item.timer_started_at is None:
+            return
+
+        detected_at = datetime.now()
+        last_activity_at = detected_at - timedelta(seconds=idle_seconds)
+        elapsed_to_last_activity = max(
+            0,
+            int((last_activity_at - item.timer_started_at).total_seconds()),
+        )
+        event = IdleTimerEvent(
+            item_id=item.id,
+            description=item.description,
+            detected_at=detected_at,
+            last_activity_at=last_activity_at,
+            running_seconds_at_detection=item.total_elapsed_seconds(detected_at),
+            running_seconds_at_last_activity=(
+                item.time_spent_seconds + elapsed_to_last_activity
+            ),
+            idle_seconds=idle_seconds,
+        )
+
+        self.store.stop_timer(item.id, now=detected_at)
+        self.store.save()
+        self.refresh_tree(select_item_id=item.id)
+        self.status_var.set("Timer stopped after keyboard/mouse inactivity.")
+        self._show_idle_timer_dialog(event)
+
+    def _show_idle_timer_dialog(self, event: IdleTimerEvent) -> None:
+        self.idle_dialog_open = True
+        try:
+            dialog = IdleTimerDialog(self.root, event)
+            self.root.wait_window(dialog)
+            self._handle_idle_timer_choice(event, dialog.result)
+        finally:
+            self.idle_dialog_open = False
+            self._record_app_activity()
+
+    def _handle_idle_timer_choice(
+        self, event: IdleTimerEvent, choice: str
+    ) -> None:
+        try:
+            item = self.store.get_by_id(event.item_id)
+        except KeyError:
+            self.status_var.set("Idle timer task no longer exists.")
+            return
+
+        try:
+            if choice == "reset":
+                item.time_spent_seconds = event.running_seconds_at_last_activity
+                item.last_worked_at = event.last_activity_at
+                item.timer_started_at = None
+                self.status_var.set("Timer reset to the last activity time.")
+            elif choice == "restart":
+                if item.completed:
+                    messagebox.showinfo(
+                        APP_TITLE,
+                        "Reopen the task before timing it.",
+                        parent=self.root,
+                    )
+                    return
+                self.store.start_timer(item.id)
+                self.status_var.set("Timer restarted.")
+            else:
+                self.status_var.set("Timer left stopped after inactivity.")
+            self.store.save()
+            self.refresh_tree(select_item_id=item.id)
+        except Exception as exc:
+            messagebox.showerror(
+                APP_TITLE,
+                f"Could not update idle timer action:\n{exc}",
+                parent=self.root,
+            )
+
     def _tick(self) -> None:
+        self._check_idle_timer()
         if self.store.running_items():
             selected = (
                 self.tree.selection()[0] if self.tree.selection() else None
@@ -940,6 +1212,7 @@ class TodoTimerApp:
         else:
             self._update_running_status()
         self.update_connection_status()
+        self._update_idle_status()
         self.root.after(1000, self._tick)
 
     def ensure_file_loaded(self) -> None:
@@ -976,12 +1249,21 @@ class TodoTimerApp:
     def today_string() -> str:
         return datetime.now().strftime("%Y-%m-%d")
 
+    @staticmethod
+    def _normalized_idle_timeout(value: object) -> int:
+        try:
+            minutes = int(value)
+        except (TypeError, ValueError):
+            return DEFAULT_IDLE_TIMEOUT_MINUTES
+        return max(1, minutes)
+
     def on_close(self) -> None:
         self.config.last_file = self.path_var.get().strip()
         self.config.archive_file = self.archive_path_var.get().strip()
         self.config.window_geometry = self.root.geometry()
         self.config.sort_mode = self.sort_mode
         self.config.show_completed = self.show_completed_var.get()
+        self.config.idle_timeout_minutes = self.idle_timeout_minutes
         try:
             self.config_store.save(self.config)
             self.config_store.loaded = True

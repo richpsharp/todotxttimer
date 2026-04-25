@@ -154,6 +154,7 @@ class AppConfig:
     window_geometry: str = ""
     sort_mode: str = "priority"
     show_completed: bool = True
+    idle_timeout_minutes: int = 10
 
 
 class ConfigStore:
@@ -359,26 +360,28 @@ class TodoStore:
         return item
 
     def stop_all_timers(
-        self, except_item_id: str | None = None
+        self,
+        except_item_id: str | None = None,
+        now: datetime | None = None,
     ) -> list[TodoItem]:
         changed: list[TodoItem] = []
         for item in self.items:
             if item.id == except_item_id:
                 continue
             if item.timer_started_at is not None:
-                item.stop_timer()
+                item.stop_timer(now=now)
                 changed.append(item)
         return changed
 
-    def start_timer(self, item_id: str) -> TodoItem:
+    def start_timer(self, item_id: str, now: datetime | None = None) -> TodoItem:
         self.stop_all_timers(except_item_id=item_id)
         item = self.get_by_id(item_id)
-        item.start_timer()
+        item.start_timer(now=now)
         return item
 
-    def stop_timer(self, item_id: str) -> TodoItem:
+    def stop_timer(self, item_id: str, now: datetime | None = None) -> TodoItem:
         item = self.get_by_id(item_id)
-        item.stop_timer()
+        item.stop_timer(now=now)
         return item
 
     def running_items(self) -> list[TodoItem]:
