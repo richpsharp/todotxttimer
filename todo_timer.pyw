@@ -294,8 +294,6 @@ class ReportDateDialog(tk.Toplevel):
             year -= 1
             month = 12
         self.set_month_range(year, month)
-        self.month_var.set(date(year, month, 1).strftime("%B"))
-        self.year_var.set(year)
 
     def apply_selected_month(self) -> None:
         year, month = self.selected_year_month()
@@ -648,7 +646,6 @@ class TodoTimerApp:
         self.todo_status_var = tk.StringVar(value="")
         self.archive_status_var = tk.StringVar(value="")
         self.idle_status_var = tk.StringVar(value="")
-        self.running_var = tk.StringVar(value="")
 
         self._build_styles()
         self._build_menu()
@@ -963,12 +960,7 @@ class TodoTimerApp:
         self.root.bind_all("<Alt-Right>", lambda event: self.clear_priority())
         self.tree.bind(
             "x",
-            lambda event: (
-                self.toggle_complete_selected()
-                if self._tree_has_focus()
-                else None
-            )
-            or "break",
+            lambda event: self.toggle_complete_selected() or "break",
         )
         self.tree.bind(
             "<Control-t>", lambda event: self.toggle_timer_selected() or "break"
@@ -991,10 +983,6 @@ class TodoTimerApp:
 
     def _record_app_activity(self) -> None:
         self.last_app_activity_at = datetime.now()
-
-    def _tree_has_focus(self) -> bool:
-        focus = self.root.focus_get()
-        return focus is self.tree
 
     def show_about(self) -> None:
         messagebox.showinfo(
@@ -1019,52 +1007,54 @@ class TodoTimerApp:
         )
 
     def choose_file(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Open todo.txt",
-            filetypes=[
-                ("todo.txt files", "*.txt"),
-                ("Text files", "*.txt"),
-                ("All files", "*.*"),
-            ],
-        )
+        path = self.ask_existing_text_file("Open todo.txt", "todo.txt")
         if path:
             self.open_file(path)
 
     def create_new_file(self) -> None:
-        path = filedialog.asksaveasfilename(
-            title="Create new todo.txt",
-            defaultextension=".txt",
-            initialfile="todo.txt",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-        )
-        if not path:
-            return
-        Path(path).write_text("", encoding="utf-8")
-        self.open_file(path)
+        path = self.ask_save_text_file("Create new todo.txt", "todo.txt")
+        if path:
+            self.open_file(path)
 
     def choose_archive_file(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Open archive.txt",
-            filetypes=[
-                ("archive.txt files", "*.txt"),
-                ("Text files", "*.txt"),
-                ("All files", "*.*"),
-            ],
-        )
+        path = self.ask_existing_text_file("Open archive.txt", "archive.txt")
         if path:
             self.set_archive_file(path)
 
     def create_new_archive_file(self) -> None:
-        path = filedialog.asksaveasfilename(
-            title="Create new archive.txt",
-            defaultextension=".txt",
-            initialfile="archive.txt",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        path = self.ask_save_text_file("Create new archive.txt", "archive.txt")
+        if path:
+            self.set_archive_file(path)
+
+    @staticmethod
+    def text_filetypes(preferred_name: str | None = None) -> list[tuple[str, str]]:
+        filetypes = []
+        if preferred_name:
+            filetypes.append((f"{preferred_name} files", "*.txt"))
+        filetypes.extend([("Text files", "*.txt"), ("All files", "*.*")])
+        return filetypes
+
+    def ask_existing_text_file(self, title: str, preferred_name: str) -> str:
+        return filedialog.askopenfilename(
+            title=title,
+            filetypes=self.text_filetypes(preferred_name),
         )
-        if not path:
-            return
-        Path(path).write_text("", encoding="utf-8")
-        self.set_archive_file(path)
+
+    def ask_save_text_file(
+        self,
+        title: str,
+        initialfile: str,
+        overwrite: bool = True,
+    ) -> str:
+        path = filedialog.asksaveasfilename(
+            title=title,
+            defaultextension=".txt",
+            initialfile=initialfile,
+            filetypes=self.text_filetypes(),
+        )
+        if path and (overwrite or not Path(path).exists()):
+            Path(path).write_text("", encoding="utf-8")
+        return path
 
     def set_archive_file(self, path: str) -> None:
         archive_path = str(Path(path))
@@ -1127,9 +1117,7 @@ class TodoTimerApp:
         try:
             self.ensure_file_loaded()
             archive_path = self.ensure_archive_file_loaded()
-            completed_count = len(
-                [item for item in self.store.items if item.completed]
-            )
+            completed_count = sum(item.completed for item in self.store.items)
             if completed_count == 0:
                 messagebox.showinfo(
                     APP_TITLE,
@@ -1716,9 +1704,6 @@ class TodoTimerApp:
                 else "not started"
             )
             spent = format_duration(item.total_elapsed_seconds())
-            task_text = item.description
-            if item.projects:
-                task_text = f"{task_text}"
             self.tree.insert(
                 "",
                 "end",
@@ -1729,7 +1714,7 @@ class TodoTimerApp:
                     item.creation_date or "",
                     last_worked,
                     spent + (" ▶" if item.timer_started_at else ""),
-                    task_text,
+                    item.description,
                 ),
                 tags=tags,
             )
@@ -1740,21 +1725,10 @@ class TodoTimerApp:
             self.tree.see(current_selection)
 
         total = len(self.store.items)
-        complete = len([item for item in self.store.items if item.completed])
+        complete = sum(item.completed for item in self.store.items)
         incomplete = total - complete
         self.status_var.set(
             f"Tasks: {total} total | {incomplete} incomplete | {complete} complete | Sort: {self.sort_mode}"
-        )
-        self._update_running_status()
-
-    def _update_running_status(self) -> None:
-        running = self.store.running_items()
-        if not running:
-            self.running_var.set("")
-            return
-        item = running[0]
-        self.running_var.set(
-            f"Running: {format_duration(item.total_elapsed_seconds())} - {item.description[:70]}"
         )
 
     def update_connection_status(self) -> None:
@@ -1908,8 +1882,6 @@ class TodoTimerApp:
                 self.tree.selection()[0] if self.tree.selection() else None
             )
             self.refresh_tree(select_item_id=selected)
-        else:
-            self._update_running_status()
         self.update_connection_status()
         self._update_idle_status()
         self.root.after(1000, self._tick)
@@ -1928,16 +1900,13 @@ class TodoTimerApp:
             self.update_connection_status()
             return str(path)
 
-        path = filedialog.asksaveasfilename(
-            title="Choose or create archive.txt",
-            defaultextension=".txt",
-            initialfile="archive.txt",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        path = self.ask_save_text_file(
+            "Choose or create archive.txt",
+            "archive.txt",
+            overwrite=False,
         )
         if not path:
             raise RuntimeError("Choose or create an archive.txt file first.")
-        if not Path(path).exists():
-            Path(path).write_text("", encoding="utf-8")
         self.set_archive_file(path)
         archive_path = self.archive_path_var.get().strip()
         if not archive_path:
