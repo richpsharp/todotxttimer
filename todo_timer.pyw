@@ -301,6 +301,7 @@ class TodoTimerApp:
         )
         self.path_var = tk.StringVar(value="")
         self.status_var = tk.StringVar(value="Open a todo.txt file to begin.")
+        self.idle_status_var = tk.StringVar(value="")
         self.running_var = tk.StringVar(value="")
 
         self._build_styles()
@@ -508,8 +509,11 @@ class TodoTimerApp:
         ttk.Label(status_frame, textvariable=self.status_var).grid(
             row=0, column=0, sticky="w"
         )
-        ttk.Label(status_frame, textvariable=self.running_var).grid(
+        ttk.Label(status_frame, textvariable=self.idle_status_var).grid(
             row=0, column=1, sticky="e"
+        )
+        ttk.Label(status_frame, textvariable=self.running_var).grid(
+            row=0, column=2, sticky="e", padx=(12, 0)
         )
 
     def _bind_shortcuts(self) -> None:
@@ -926,6 +930,19 @@ class TodoTimerApp:
             f"Running: {format_duration(item.total_elapsed_seconds())} - {item.description[:70]}"
         )
 
+    def _update_idle_status(self) -> None:
+        if not self.store.running_items():
+            self.idle_status_var.set("")
+            return
+        idle_seconds = self._current_idle_seconds()
+        threshold_seconds = self.idle_timeout_minutes * 60
+        remaining_seconds = max(0, threshold_seconds - idle_seconds)
+        self.idle_status_var.set(
+            "Idle: "
+            f"{format_duration(idle_seconds)} | "
+            f"Pauses in: {format_duration(remaining_seconds)}"
+        )
+
     def _current_idle_seconds(self) -> int:
         system_idle_seconds = get_system_idle_seconds()
         if system_idle_seconds is not None:
@@ -1027,6 +1044,7 @@ class TodoTimerApp:
             self.refresh_tree(select_item_id=selected)
         else:
             self._update_running_status()
+        self._update_idle_status()
         self.root.after(1000, self._tick)
 
     def ensure_file_loaded(self) -> None:
