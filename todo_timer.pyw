@@ -78,6 +78,12 @@ class ToolTip:
             return
         self.tip_window.destroy()
         self.tip_window = None
+@dataclass(slots=True)
+class ReportTask:
+    item: TodoItem
+    status: str
+    source: str
+    activity_date: str
 
 
 class IdleTimerDialog(tk.Toplevel):
@@ -1073,14 +1079,14 @@ class TodoTimerApp:
         start_date, end_date = dialog.result
 
         try:
-            tasks = self.completed_archive_tasks_in_range(
+            tasks = self.report_tasks_in_range(
                 archive_file, start_date, end_date
             )
             if not tasks:
                 messagebox.showinfo(
                     APP_TITLE,
                     (
-                        "No completed archived tasks were found between "
+                        "No archived or active todo.txt tasks were found between "
                         f"{start_date} and {end_date}."
                     ),
                     parent=self.root,
@@ -1095,7 +1101,7 @@ class TodoTimerApp:
                 report,
             )
             self.status_var.set(
-                f"Generated report for {len(tasks)} archived task(s)."
+                f"Generated report for {len(tasks)} task(s)."
             )
         except Exception as exc:
             messagebox.showerror(
@@ -1105,13 +1111,32 @@ class TodoTimerApp:
             )
             self.status_var.set("Report generation failed.")
 
+    def report_tasks_in_range(
+        self,
+        archive_path: Path,
+        start_date: str,
+        end_date: str,
+    ) -> list[ReportTask]:
+        tasks = self.completed_archive_tasks_in_range(
+            archive_path, start_date, end_date
+        )
+        tasks.extend(self.active_todo_report_tasks_in_range(start_date, end_date))
+        return sorted(
+            tasks,
+            key=lambda task: (
+                task.activity_date,
+                task.status,
+                task.item.description.casefold(),
+            ),
+        )
+
     def completed_archive_tasks_in_range(
         self,
         archive_path: Path,
         start_date: str,
         end_date: str,
-    ) -> list[TodoItem]:
-        tasks: list[TodoItem] = []
+    ) -> list[ReportTask]:
+        tasks: list[ReportTask] = []
         for index, line in enumerate(
             archive_path.read_text(encoding="utf-8").splitlines()
         ):
@@ -1123,36 +1148,112 @@ class TodoTimerApp:
                 and item.completion_date
                 and start_date <= item.completion_date <= end_date
             ):
-                tasks.append(item)
+                tasks.append(
+                    ReportTask(
+                        item=item,
+                        status="completed",
+                        source="archive.txt",
+                        activity_date=item.completion_date,
+                    )
+                )
         return tasks
+
+    def active_todo_report_tasks_in_range(
+        self,
+        start_date: str,
+        end_date: str,
+    ) -> list[ReportTask]:
+        tasks: list[ReportTask] = []
+        if self.store.path is None:
+            return tasks
+
+        for item in self.store.items:
+            if (
+                item.completed
+                and item.completion_date
+                and start_date <= item.completion_date <= end_date
+            ):
+                tasks.append(
+                    ReportTask(
+                        item=item,
+                        status="completed",
+                        source="todo.txt",
+                        activity_date=item.completion_date,
+                    )
+                )
+                continue
+
+            activity_date = self.in_progress_activity_date(
+                item, start_date, end_date
+            )
+            if activity_date is not None:
+                tasks.append(
+                    ReportTask(
+                        item=item,
+                        status="in progress",
+                        source="todo.txt",
+                        activity_date=activity_date,
+                    )
+                )
+        return tasks
+
+    def in_progress_activity_date(
+        self,
+        item: TodoItem,
+        start_date: str,
+        end_date: str,
+    ) -> str | None:
+        if item.completed:
+            return None
+
+        candidates: list[str] = []
+        if item.last_worked_at is not None:
+            candidates.append(item.last_worked_at.strftime("%Y-%m-%d"))
+        if item.timer_started_at is not None:
+            candidates.append(item.timer_started_at.strftime("%Y-%m-%d"))
+            today = self.today_string()
+            if start_date <= today <= end_date:
+                candidates.append(today)
+
+        in_range = [
+            candidate
+            for candidate in candidates
+            if start_date <= candidate <= end_date
+        ]
+        return max(in_range) if in_range else None
 
     def generate_openai_report(
         self,
-        tasks: list[TodoItem],
+        tasks: list[ReportTask],
         start_date: str,
         end_date: str,
     ) -> str:
-        task_lines = "\n".join(
-            f"- {item.completion_date}: {item.description} "
-            f"(tracked {format_duration(item.time_spent_seconds)})"
-            for item in tasks
+        completed_lines = self.format_report_task_lines(
+            [task for task in tasks if task.status == "completed"]
+        )
+        in_progress_lines = self.format_report_task_lines(
+            [task for task in tasks if task.status == "in progress"]
         )
         prompt = (
-            "Generate a concise work report from these completed todo.txt tasks.\n\n"
+            "Generate a concise work report from these todo.txt tasks.\n\n"
             f"Date range: {start_date} through {end_date}\n"
-            f"Completed tasks:\n{task_lines}\n\n"
+            f"Completed tasks:\n{completed_lines or '- None'}\n\n"
+            f"In-progress tasks worked during the date range:\n"
+            f"{in_progress_lines or '- None'}\n\n"
             "Write a polished report with these sections:\n"
             "1. Summary\n"
             "2. Completed Work\n"
-            "3. Themes and Progress\n"
-            "4. Follow-ups or Risks, if any\n"
+            "3. In Progress\n"
+            "4. Themes and Progress\n"
+            "5. Follow-ups or Risks, if any\n"
             "Keep it practical and grounded only in the task list."
         )
         payload = {
             "model": REPORT_MODEL,
             "instructions": (
-                "You write clear status reports from completed task lists. "
-                "Do not invent facts that are not implied by the tasks."
+                "You write clear status reports from completed and in-progress "
+                "task lists. Do not invent facts that are not implied by the "
+                "tasks."
             ),
             "input": prompt,
         }
@@ -1189,6 +1290,14 @@ class TodoTimerApp:
         if not report:
             raise RuntimeError("OpenAI response did not include report text.")
         return report
+
+    def format_report_task_lines(self, tasks: list[ReportTask]) -> str:
+        return "\n".join(
+            f"- {task.activity_date}: {task.item.description} "
+            f"[{task.source}; {task.status}; "
+            f"tracked {format_duration(task.item.total_elapsed_seconds())}]"
+            for task in tasks
+        )
 
     def quick_add(self) -> None:
         text = self.quick_add_var.get().strip()
