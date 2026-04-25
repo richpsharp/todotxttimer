@@ -21,7 +21,9 @@ from todo_core import (
     TodoStore,
     extract_first_url,
     format_duration,
+    format_timestamp,
     is_date_string,
+    parse_timestamp,
     parse_todo_line,
 )
 
@@ -150,6 +152,72 @@ class IdleTimerDialog(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", lambda: self._finish("close"))
         self.bind("<Escape>", lambda event_: self._finish("close"))
+        self.grab_set()
+        self.update_idletasks()
+        self.minsize(self.winfo_width(), self.winfo_height())
+
+    def _finish(self, result: str) -> None:
+        self.result = result
+        self.destroy()
+
+
+class RunningTimerRecoveryDialog(tk.Toplevel):
+    def __init__(
+        self,
+        master: tk.Misc,
+        item: TodoItem,
+        closed_at: datetime,
+        opened_at: datetime,
+    ):
+        super().__init__(master)
+        self.title("Timer left running")
+        self.resizable(False, False)
+        self.transient(master)
+        self.result = "continue"
+
+        closed_seconds = max(0, int((opened_at - closed_at).total_seconds()))
+
+        body = ttk.Frame(self, padding=14)
+        body.grid(sticky="nsew")
+        body.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            body,
+            text=(
+                "The timer was left running on this task while the app was "
+                "closed."
+            ),
+            wraplength=540,
+        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ttk.Label(
+            body,
+            text=f"Task: {item.description}",
+            wraplength=540,
+        ).grid(row=1, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(
+            body,
+            text=f"App closed at: {closed_at:%Y-%m-%d %H:%M:%S}",
+        ).grid(row=2, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(
+            body,
+            text=f"Time closed: {format_duration(closed_seconds)}",
+        ).grid(row=3, column=0, sticky="w", pady=(0, 12))
+
+        button_row = ttk.Frame(body)
+        button_row.grid(row=4, column=0, sticky="e")
+        ttk.Button(
+            button_row,
+            text="Continue timer",
+            command=lambda: self._finish("continue"),
+        ).pack(side="right")
+        ttk.Button(
+            button_row,
+            text="Stop at app close",
+            command=lambda: self._finish("stop_at_close"),
+        ).pack(side="right", padx=(0, 8))
+
+        self.protocol("WM_DELETE_WINDOW", lambda: self._finish("continue"))
+        self.bind("<Escape>", lambda event_: self._finish("continue"))
         self.grab_set()
         self.update_idletasks()
         self.minsize(self.winfo_width(), self.winfo_height())
@@ -669,6 +737,7 @@ class TodoTimerApp:
             except Exception as exc:
                 self.status_var.set(f"Could not open saved file: {exc}")
         self.update_connection_status()
+        self.recover_left_running_timer()
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._tick()
@@ -1102,6 +1171,65 @@ class TodoTimerApp:
             self.status_var.set(
                 f"Loaded {len(self.store.items)} task(s) from {path}"
             )
+
+    def recover_left_running_timer(self) -> None:
+        if self.store.path is None:
+            return
+
+        try:
+            closed_at = parse_timestamp(self.config.last_closed_at.strip())
+        except TodoFormatError:
+            self.clear_last_closed_at()
+            return
+        if closed_at is None:
+            return
+
+        running = self.store.running_items()
+        if not running:
+            self.clear_last_closed_at()
+            return
+
+        item = running[0]
+        if item.timer_started_at is None or closed_at < item.timer_started_at:
+            self.clear_last_closed_at()
+            return
+
+        opened_at = datetime.now()
+        if closed_at > opened_at:
+            closed_at = opened_at
+
+        dialog = RunningTimerRecoveryDialog(
+            self.root,
+            item,
+            closed_at,
+            opened_at,
+        )
+        self.root.wait_window(dialog)
+
+        try:
+            if dialog.result == "stop_at_close":
+                self.store.stop_timer(item.id, now=closed_at)
+                self.store.save()
+                self.refresh_tree(select_item_id=item.id)
+                self.status_var.set(
+                    "Timer was stopped at the previous app close time."
+                )
+            else:
+                self.status_var.set("Timer left running from previous session.")
+            self.clear_last_closed_at()
+        except Exception as exc:
+            messagebox.showerror(
+                APP_TITLE,
+                f"Could not recover the running timer:\n{exc}",
+                parent=self.root,
+            )
+
+    def clear_last_closed_at(self) -> None:
+        self.config.last_closed_at = ""
+        try:
+            self.config_store.save(self.config)
+        except Exception:
+            pass
 
     def reload_file(self) -> None:
         if not self.store.path:
@@ -1957,9 +2085,13 @@ class TodoTimerApp:
         return max(1, minutes)
 
     def on_close(self) -> None:
+        now = datetime.now()
         self.config.last_file = self.path_var.get().strip()
         self.config.archive_file = self.archive_path_var.get().strip()
         self.config.openai_api_key = self.config.openai_api_key.strip()
+        self.config.last_closed_at = (
+            format_timestamp(now) if self.store.running_items() else ""
+        )
         self.config.window_geometry = self.root.geometry()
         self.config.sort_mode = self.sort_mode
         self.config.show_completed = self.show_completed_var.get()
