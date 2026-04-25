@@ -9,7 +9,7 @@ import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from urllib import error, request
 import webbrowser
 
@@ -160,6 +160,21 @@ class IdleTimerDialog(tk.Toplevel):
 
 
 class ReportDateDialog(tk.Toplevel):
+    MONTHS = [
+        ("January", 1),
+        ("February", 2),
+        ("March", 3),
+        ("April", 4),
+        ("May", 5),
+        ("June", 6),
+        ("July", 7),
+        ("August", 8),
+        ("September", 9),
+        ("October", 10),
+        ("November", 11),
+        ("December", 12),
+    ]
+
     def __init__(self, master: tk.Misc):
         super().__init__(master)
         self.title("Generate report")
@@ -167,31 +182,94 @@ class ReportDateDialog(tk.Toplevel):
         self.transient(master)
         self.result: tuple[str, str] | None = None
 
-        today = datetime.now().strftime("%Y-%m-%d")
-        self.start_var = tk.StringVar(value=today)
-        self.end_var = tk.StringVar(value=today)
+        today = date.today()
+        self.today = today
+        self.start_var = tk.StringVar()
+        self.end_var = tk.StringVar()
+        self.month_var = tk.StringVar(value=today.strftime("%B"))
+        self.year_var = tk.IntVar(value=today.year)
 
         body = ttk.Frame(self, padding=14)
         body.grid(sticky="nsew")
+        body.columnconfigure(1, weight=1)
+
+        preset_frame = ttk.LabelFrame(body, text="Quick ranges", padding=10)
+        preset_frame.grid(
+            row=0,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(0, 12),
+        )
+        ttk.Button(
+            preset_frame,
+            text="Current month to date",
+            command=self.apply_current_month,
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        ttk.Button(
+            preset_frame,
+            text="Last month",
+            command=self.apply_last_month,
+        ).grid(row=0, column=1, sticky="ew")
+
+        month_frame = ttk.LabelFrame(body, text="Pick a month", padding=10)
+        month_frame.grid(
+            row=1,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(0, 12),
+        )
+        ttk.Label(month_frame, text="Month").grid(
+            row=0, column=0, sticky="w", padx=(0, 8)
+        )
+        self.month_combo = ttk.Combobox(
+            month_frame,
+            textvariable=self.month_var,
+            values=[month for month, _ in self.MONTHS],
+            width=14,
+            state="readonly",
+        )
+        self.month_combo.grid(row=0, column=1, sticky="w", padx=(0, 12))
+        ttk.Label(month_frame, text="Year").grid(
+            row=0, column=2, sticky="w", padx=(0, 8)
+        )
+        ttk.Spinbox(
+            month_frame,
+            textvariable=self.year_var,
+            from_=1970,
+            to=9999,
+            width=7,
+        ).grid(row=0, column=3, sticky="w")
+        ttk.Button(
+            month_frame,
+            text="Use full month",
+            command=self.apply_selected_month,
+        ).grid(row=1, column=1, sticky="ew", pady=(10, 0), padx=(0, 8))
+        ttk.Button(
+            month_frame,
+            text="Use month to date",
+            command=self.apply_selected_month_to_date,
+        ).grid(row=1, column=2, columnspan=2, sticky="ew", pady=(10, 0))
 
         ttk.Label(body, text="Start date").grid(
-            row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+            row=2, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
         )
         ttk.Entry(body, textvariable=self.start_var, width=18).grid(
-            row=0, column=1, sticky="w", pady=(0, 8)
+            row=2, column=1, sticky="w", pady=(0, 8)
         )
         ttk.Label(body, text="End date").grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+            row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
         )
         ttk.Entry(body, textvariable=self.end_var, width=18).grid(
-            row=1, column=1, sticky="w", pady=(0, 8)
+            row=3, column=1, sticky="w", pady=(0, 8)
         )
         ttk.Label(body, text="Use YYYY-MM-DD").grid(
-            row=2, column=1, sticky="w", pady=(0, 10)
+            row=4, column=1, sticky="w", pady=(0, 10)
         )
 
         button_row = ttk.Frame(body)
-        button_row.grid(row=3, column=0, columnspan=2, sticky="e")
+        button_row.grid(row=5, column=0, columnspan=2, sticky="e")
         ttk.Button(button_row, text="Cancel", command=self.destroy).pack(
             side="right"
         )
@@ -201,9 +279,67 @@ class ReportDateDialog(tk.Toplevel):
 
         self.bind("<Escape>", lambda event: self.destroy())
         self.bind("<Return>", lambda event: self._on_generate())
+        self.apply_current_month()
         self.grab_set()
         self.update_idletasks()
         self.minsize(self.winfo_width(), self.winfo_height())
+
+    def apply_current_month(self) -> None:
+        self.set_range(date(self.today.year, self.today.month, 1), self.today)
+
+    def apply_last_month(self) -> None:
+        year = self.today.year
+        month = self.today.month - 1
+        if month == 0:
+            year -= 1
+            month = 12
+        self.set_month_range(year, month)
+        self.month_var.set(date(year, month, 1).strftime("%B"))
+        self.year_var.set(year)
+
+    def apply_selected_month(self) -> None:
+        year, month = self.selected_year_month()
+        if year is None or month is None:
+            return
+        self.set_month_range(year, month)
+
+    def apply_selected_month_to_date(self) -> None:
+        year, month = self.selected_year_month()
+        if year is None or month is None:
+            return
+        start = date(year, month, 1)
+        self.set_range(start, self.today)
+
+    def selected_year_month(self) -> tuple[int | None, int | None]:
+        month_lookup = dict(self.MONTHS)
+        month = month_lookup.get(self.month_var.get())
+        try:
+            year = int(self.year_var.get())
+        except (TypeError, tk.TclError, ValueError):
+            year = None
+        if month is None or year is None or year < 1:
+            messagebox.showerror(
+                APP_TITLE,
+                "Choose a valid month and year.",
+                parent=self,
+            )
+            return None, None
+        return year, month
+
+    def set_month_range(self, year: int, month: int) -> None:
+        self.month_var.set(date(year, month, 1).strftime("%B"))
+        self.year_var.set(year)
+        self.set_range(date(year, month, 1), self.last_day_of_month(year, month))
+
+    def set_range(self, start_date: date, end_date: date) -> None:
+        self.start_var.set(start_date.strftime("%Y-%m-%d"))
+        self.end_var.set(end_date.strftime("%Y-%m-%d"))
+
+    @staticmethod
+    def last_day_of_month(year: int, month: int) -> date:
+        if month == 12:
+            return date(year, 12, 31)
+        return date(year, month + 1, 1) - timedelta(days=1)
 
     def _on_generate(self) -> None:
         start_date = self.start_var.get().strip()
