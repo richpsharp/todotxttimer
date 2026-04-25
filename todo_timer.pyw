@@ -42,6 +42,42 @@ class IdleTimerEvent:
     idle_seconds: int
 
 
+class ToolTip:
+    def __init__(self, widget: tk.Widget, text: str = "") -> None:
+        self.widget = widget
+        self.text = text
+        self.tip_window: tk.Toplevel | None = None
+        widget.bind("<Enter>", self.show)
+        widget.bind("<Leave>", self.hide)
+        widget.bind("<ButtonPress>", self.hide)
+
+    def set_text(self, text: str) -> None:
+        self.text = text
+        if self.tip_window is not None:
+            label = self.tip_window.winfo_children()[0]
+            if isinstance(label, ttk.Label):
+                label.configure(text=text)
+
+    def show(self, event: tk.Event[tk.Widget]) -> None:
+        if self.tip_window is not None or not self.text:
+            return
+        self.tip_window = tk.Toplevel(self.widget)
+        self.tip_window.wm_overrideredirect(True)
+        self.tip_window.wm_geometry(f"+{event.x_root + 12}+{event.y_root + 10}")
+        ttk.Label(
+            self.tip_window,
+            text=self.text,
+            padding=(6, 4),
+            relief="solid",
+            borderwidth=1,
+            wraplength=720,
+        ).pack()
+
+    def hide(self, event: tk.Event[tk.Widget] | None = None) -> None:
+        if self.tip_window is None:
+            return
+        self.tip_window.destroy()
+        self.tip_window = None
 @dataclass(slots=True)
 class ReportTask:
     item: TodoItem
@@ -734,6 +770,7 @@ class TodoTimerApp:
                 "config.json",
             ),
         )
+        self.config_status_tooltip = ToolTip(self.config_status_label)
         self.todo_status_label = ttk.Label(
             connection_frame,
             textvariable=self.todo_status_var,
@@ -747,6 +784,7 @@ class TodoTimerApp:
                 "todo.txt",
             ),
         )
+        self.todo_status_tooltip = ToolTip(self.todo_status_label)
         self.archive_status_label = ttk.Label(
             connection_frame,
             textvariable=self.archive_status_var,
@@ -760,6 +798,7 @@ class TodoTimerApp:
                 "archive.txt",
             ),
         )
+        self.archive_status_tooltip = ToolTip(self.archive_status_label)
 
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<Control-o>", lambda event: self.choose_file())
@@ -1584,10 +1623,12 @@ class TodoTimerApp:
 
     def update_connection_status(self) -> None:
         config_ok = self.config_store.loaded
-        config_prefix = "✓" if config_ok else "!"
         self.config_status_var.set(
-            f"{config_prefix} Config: {self.config_store.path} "
-            f"({self.config_store.load_message})"
+            f"{chr(0x2713) if config_ok else '!'} Config: "
+            f"{self.config_store.path.name}"
+        )
+        self.config_status_tooltip.set_text(
+            f"Config: {self.config_store.path}\n{self.config_store.load_message}"
         )
         self.config_status_label.configure(
             foreground="#107c10" if config_ok else "#8a6d00"
@@ -1595,9 +1636,12 @@ class TodoTimerApp:
 
         todo_path = self.path_var.get().strip()
         todo_ok = bool(todo_path) and Path(todo_path).exists()
+        todo_name = Path(todo_path).name if todo_path else "not loaded"
         self.todo_status_var.set(
-            f"{'✓' if todo_ok else '!'} todo.txt: "
-            f"{todo_path if todo_path else 'not loaded'}"
+            f"{chr(0x2713) if todo_ok else '!'} todo.txt: {todo_name}"
+        )
+        self.todo_status_tooltip.set_text(
+            f"todo.txt: {todo_path if todo_path else 'not loaded'}"
         )
         self.todo_status_label.configure(
             foreground="#107c10" if todo_ok else "#8a6d00"
@@ -1605,9 +1649,12 @@ class TodoTimerApp:
 
         archive_path = self.archive_path_var.get().strip()
         archive_ok = bool(archive_path) and Path(archive_path).exists()
+        archive_name = Path(archive_path).name if archive_path else "not set"
         self.archive_status_var.set(
-            f"{'✓' if archive_ok else '!'} archive.txt: "
-            f"{archive_path if archive_path else 'not set'}"
+            f"{chr(0x2713) if archive_ok else '!'} archive.txt: {archive_name}"
+        )
+        self.archive_status_tooltip.set_text(
+            f"archive.txt: {archive_path if archive_path else 'not set'}"
         )
         self.archive_status_label.configure(
             foreground="#107c10" if archive_ok else "#8a6d00"
