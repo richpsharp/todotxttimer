@@ -975,6 +975,11 @@ class TodoTimerApp:
             "<Control-t>", lambda event: self.toggle_timer_selected() or "break"
         )
         self.root.bind_all("<Control-l>", lambda event: self.open_first_link())
+        for sequence in ("<Control-Alt-Shift-b>", "<Control-Alt-Shift-B>"):
+            self.root.bind_all(
+                sequence,
+                lambda event: self.debug_trigger_idle_timeout() or "break",
+            )
 
     def _bind_activity_tracking(self) -> None:
         for sequence in (
@@ -1810,9 +1815,25 @@ class TodoTimerApp:
         if idle_seconds < threshold_seconds:
             return
 
+        self.trigger_idle_timeout(idle_seconds)
+
+    def debug_trigger_idle_timeout(self) -> None:
+        if self.idle_dialog_open:
+            return
+        forced_idle_seconds = max(1, self.idle_timeout_minutes * 60)
+        if not self.trigger_idle_timeout(forced_idle_seconds):
+            self.status_var.set("Start a timer before testing idle timeout.")
+
+    def trigger_idle_timeout(self, idle_seconds: int) -> bool:
+        if self.idle_dialog_open:
+            return False
+        running = self.store.running_items()
+        if not running:
+            return False
+
         item = running[0]
         if item.timer_started_at is None:
-            return
+            return False
 
         detected_at = datetime.now()
         last_activity_at = detected_at - timedelta(seconds=idle_seconds)
@@ -1835,6 +1856,7 @@ class TodoTimerApp:
         self.refresh_tree(select_item_id=item.id)
         self.status_var.set("Timer stopped after keyboard/mouse inactivity.")
         self._show_idle_timer_dialog(event)
+        return True
 
     def _show_idle_timer_dialog(self, event: IdleTimerEvent) -> None:
         self.idle_dialog_open = True
