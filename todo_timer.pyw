@@ -187,6 +187,9 @@ class TodoTimerApp:
             value=self.config.show_completed
         )
         self.path_var = tk.StringVar(value="")
+        self.archive_path_var = tk.StringVar(
+            value=self.config.archive_file.strip()
+        )
         self.status_var = tk.StringVar(value="Open a todo.txt file to begin.")
         self.running_var = tk.StringVar(value="")
 
@@ -235,6 +238,20 @@ class TodoTimerApp:
         )
         file_menu.add_command(
             label="Save", accelerator="Ctrl+S", command=self.save_file
+        )
+        file_menu.add_separator()
+        file_menu.add_command(
+            label="Open archive.txt...",
+            command=self.choose_archive_file,
+        )
+        file_menu.add_command(
+            label="Create new archive.txt...",
+            command=self.create_new_archive_file,
+        )
+        file_menu.add_command(
+            label="Archive completed tasks",
+            accelerator="Ctrl+Shift+A",
+            command=self.archive_completed_tasks,
         )
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.on_close)
@@ -396,6 +413,11 @@ class TodoTimerApp:
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<Control-o>", lambda event: self.choose_file())
         self.root.bind_all("<Control-s>", lambda event: self.save_file())
+        for sequence in ("<Control-Shift-a>", "<Control-Shift-A>"):
+            self.root.bind_all(
+                sequence,
+                lambda event: self.archive_completed_tasks() or "break",
+            )
         self.root.bind_all("<F5>", lambda event: self.reload_file())
         self.root.bind_all(
             "<Control-n>",
@@ -447,6 +469,7 @@ class TodoTimerApp:
                 "  Alt+Up / Alt+Down change priority\n"
                 "  Ctrl+T start/stop timer\n"
                 "  Ctrl+L open first link\n"
+                "  Ctrl+Shift+A archive completed tasks\n"
             ),
             parent=self.root,
         )
@@ -475,6 +498,45 @@ class TodoTimerApp:
         Path(path).write_text("", encoding="utf-8")
         self.open_file(path)
 
+    def choose_archive_file(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Open archive.txt",
+            filetypes=[
+                ("archive.txt files", "*.txt"),
+                ("Text files", "*.txt"),
+                ("All files", "*.*"),
+            ],
+        )
+        if path:
+            self.set_archive_file(path)
+
+    def create_new_archive_file(self) -> None:
+        path = filedialog.asksaveasfilename(
+            title="Create new archive.txt",
+            defaultextension=".txt",
+            initialfile="archive.txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        Path(path).write_text("", encoding="utf-8")
+        self.set_archive_file(path)
+
+    def set_archive_file(self, path: str) -> None:
+        archive_path = str(Path(path))
+        self.archive_path_var.set(archive_path)
+        self.config.archive_file = archive_path
+        try:
+            self.config_store.save(self.config)
+        except Exception as exc:
+            messagebox.showerror(
+                APP_TITLE,
+                f"Could not save archive file setting:\n{exc}",
+                parent=self.root,
+            )
+            return
+        self.status_var.set(f"Archive file set to {archive_path}")
+
     def open_file(self, path: str) -> None:
         self.store.load(path)
         self.path_var.set(str(Path(path)))
@@ -502,6 +564,41 @@ class TodoTimerApp:
         except Exception as exc:
             messagebox.showerror(
                 APP_TITLE, f"Could not save file:\n{exc}", parent=self.root
+            )
+
+    def archive_completed_tasks(self) -> None:
+        try:
+            self.ensure_file_loaded()
+            archive_path = self.ensure_archive_file_loaded()
+            completed_count = len(
+                [item for item in self.store.items if item.completed]
+            )
+            if completed_count == 0:
+                messagebox.showinfo(
+                    APP_TITLE,
+                    "There are no completed tasks to archive.",
+                    parent=self.root,
+                )
+                return
+            if not messagebox.askyesno(
+                APP_TITLE,
+                (
+                    f"Archive {completed_count} completed task(s) to:\n\n"
+                    f"{archive_path}"
+                ),
+                parent=self.root,
+            ):
+                return
+            archived_count = self.store.archive_completed(archive_path)
+            self.refresh_tree()
+            self.status_var.set(
+                f"Archived {archived_count} completed task(s) to {archive_path}"
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                APP_TITLE,
+                f"Could not archive completed tasks:\n{exc}",
+                parent=self.root,
             )
 
     def quick_add(self) -> None:
@@ -778,12 +875,38 @@ class TodoTimerApp:
         if not self.store.path:
             raise RuntimeError("Open or create a todo.txt file first.")
 
+    def ensure_archive_file_loaded(self) -> str:
+        archive_path = self.archive_path_var.get().strip()
+        if archive_path:
+            path = Path(archive_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.write_text("", encoding="utf-8")
+            return str(path)
+
+        path = filedialog.asksaveasfilename(
+            title="Choose or create archive.txt",
+            defaultextension=".txt",
+            initialfile="archive.txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if not path:
+            raise RuntimeError("Choose or create an archive.txt file first.")
+        if not Path(path).exists():
+            Path(path).write_text("", encoding="utf-8")
+        self.set_archive_file(path)
+        archive_path = self.archive_path_var.get().strip()
+        if not archive_path:
+            raise RuntimeError("Choose or create an archive.txt file first.")
+        return archive_path
+
     @staticmethod
     def today_string() -> str:
         return datetime.now().strftime("%Y-%m-%d")
 
     def on_close(self) -> None:
         self.config.last_file = self.path_var.get().strip()
+        self.config.archive_file = self.archive_path_var.get().strip()
         self.config.window_geometry = self.root.geometry()
         self.config.sort_mode = self.sort_mode
         self.config.show_completed = self.show_completed_var.get()

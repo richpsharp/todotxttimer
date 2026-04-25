@@ -17,6 +17,7 @@ This project is a **spiritual successor** to https://github.com/benrhughes/todot
 - Keyboard-based workflow
 - Fast task creation and editing
 - Dynamic priority adjustment
+- Archive completed tasks to a configurable `archive.txt`
 - Support for tags and metadata
 - Live reload and save
 - Python codebase
@@ -52,6 +53,11 @@ Field meanings:
 Or, for a windowed version without a console:
 
     pythonw app.pyw
+
+## Archiving
+
+Use the File menu to open or create an `archive.txt` file. Press `Ctrl+Shift+A`
+to move all completed tasks from the current `todo.txt` into that archive file.
 
 ---
 
