@@ -1,3 +1,5 @@
+<img width="1377" height="910" alt="image" src="https://github.com/user-attachments/assets/8bebd658-1690-49eb-8a51-e50e69833c43" />
+
 # TodoTimerTxt
 
 A lightweight, keyboard-driven task manager built around the simplicity of the `todo.txt` format.
@@ -15,22 +17,10 @@ This project is a **spiritual successor** to https://github.com/benrhughes/todot
 - Keyboard-based workflow
 - Fast task creation and editing
 - Dynamic priority adjustment
+- Archive completed tasks to a configurable `archive.txt`
 - Support for tags and metadata
 - Live reload and save
 - Python codebase
-
----
-
-## Why This Exists
-
-The original `todotxt.net` application provided a minimal interface for managing `todo.txt` files on Windows, but it is no longer actively maintained.
-
-This project continues that direction by:
-
-- Rebuilding the experience in Python
-- Making it easier to extend and customize
-- Adding missing features, notably task timers
-- Keeping everything local and transparent
 
 ---
 
@@ -63,6 +53,11 @@ Field meanings:
 Or, for a windowed version without a console:
 
     pythonw app.pyw
+
+## Archiving
+
+Use the File menu to open or create an `archive.txt` file. Press `Ctrl+Shift+A`
+to move all completed tasks from the current `todo.txt` into that archive file.
 
 ---
 
