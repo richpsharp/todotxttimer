@@ -121,9 +121,6 @@ class TodoItem:
             if token.startswith("@") and len(token) > 1
         ]
 
-    def raw_line(self) -> str:
-        return serialize_todo_line(self)
-
     def total_elapsed_seconds(self, now: datetime | None = None) -> int:
         total = self.time_spent_seconds
         if self.timer_started_at is not None:
@@ -290,11 +287,6 @@ class TodoStore:
         self.items.append(item)
         return item
 
-    def add_item(self, item: TodoItem) -> TodoItem:
-        item.line_index = len(self.items)
-        self.items.append(item)
-        return item
-
     def get_by_id(self, item_id: str) -> TodoItem:
         for item in self.items:
             if item.id == item_id:
@@ -318,17 +310,6 @@ class TodoStore:
             item.completed = True
             item.completion_date = today or datetime.now().strftime(DATE_FMT)
             item.priority = None
-        return item
-
-    def set_priority(self, item_id: str, priority: str | None) -> TodoItem:
-        item = self.get_by_id(item_id)
-        if priority is None or priority == "":
-            item.priority = None
-        else:
-            p = priority.upper()
-            if len(p) != 1 or not p.isalpha():
-                raise TodoFormatError("Priority must be A-Z or blank.")
-            item.priority = p
         return item
 
     def adjust_priority(self, item_id: str, direction: int) -> TodoItem:
