@@ -308,10 +308,7 @@ class ReportDateDialog(tk.Toplevel):
         if year is None or month is None:
             return
         start = date(year, month, 1)
-        month_end = self.last_day_of_month(year, month)
-        day = min(self.today.day, month_end.day)
-        end = date(year, month, day)
-        self.set_range(start, end)
+        self.set_range(start, self.today)
 
     def selected_year_month(self) -> tuple[int | None, int | None]:
         month_lookup = dict(self.MONTHS)
