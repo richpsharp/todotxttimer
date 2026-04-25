@@ -309,9 +309,8 @@ class ReportDateDialog(tk.Toplevel):
             return
         start = date(year, month, 1)
         month_end = self.last_day_of_month(year, month)
-        end = min(month_end, self.today)
-        if end < start:
-            end = month_end
+        day = min(self.today.day, month_end.day)
+        end = date(year, month, day)
         self.set_range(start, end)
 
     def selected_year_month(self) -> tuple[int | None, int | None]:
