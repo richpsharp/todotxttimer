@@ -191,6 +191,9 @@ class TodoTimerApp:
             value=self.config.archive_file.strip()
         )
         self.status_var = tk.StringVar(value="Open a todo.txt file to begin.")
+        self.config_status_var = tk.StringVar(value="")
+        self.todo_status_var = tk.StringVar(value="")
+        self.archive_status_var = tk.StringVar(value="")
         self.running_var = tk.StringVar(value="")
 
         self._build_styles()
@@ -210,6 +213,7 @@ class TodoTimerApp:
                 self.open_file(last_file)
             except Exception as exc:
                 self.status_var.set(f"Could not open saved file: {exc}")
+        self.update_connection_status()
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._tick()
@@ -410,6 +414,27 @@ class TodoTimerApp:
             row=0, column=1, sticky="e"
         )
 
+        connection_frame = ttk.Frame(outer)
+        connection_frame.grid(row=5, column=0, sticky="ew", pady=(4, 0))
+        connection_frame.columnconfigure(0, weight=1)
+        connection_frame.columnconfigure(1, weight=1)
+        connection_frame.columnconfigure(2, weight=1)
+        self.config_status_label = ttk.Label(
+            connection_frame,
+            textvariable=self.config_status_var,
+        )
+        self.config_status_label.grid(row=0, column=0, sticky="w")
+        self.todo_status_label = ttk.Label(
+            connection_frame,
+            textvariable=self.todo_status_var,
+        )
+        self.todo_status_label.grid(row=0, column=1, sticky="w", padx=(12, 0))
+        self.archive_status_label = ttk.Label(
+            connection_frame,
+            textvariable=self.archive_status_var,
+        )
+        self.archive_status_label.grid(row=0, column=2, sticky="w", padx=(12, 0))
+
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<Control-o>", lambda event: self.choose_file())
         self.root.bind_all("<Control-s>", lambda event: self.save_file())
@@ -529,22 +554,35 @@ class TodoTimerApp:
         try:
             self.config_store.save(self.config)
         except Exception as exc:
+            self.update_connection_status()
             messagebox.showerror(
                 APP_TITLE,
                 f"Could not save archive file setting:\n{exc}",
                 parent=self.root,
             )
             return
+        self.update_connection_status()
         self.status_var.set(f"Archive file set to {archive_path}")
 
     def open_file(self, path: str) -> None:
         self.store.load(path)
         self.path_var.set(str(Path(path)))
         self.config.last_file = str(Path(path))
+        config_save_error = None
+        try:
+            self.config_store.save(self.config)
+        except Exception as exc:
+            config_save_error = exc
+        self.update_connection_status()
         self.refresh_tree()
-        self.status_var.set(
-            f"Loaded {len(self.store.items)} task(s) from {path}"
-        )
+        if config_save_error:
+            self.status_var.set(
+                f"Loaded file, but could not save config: {config_save_error}"
+            )
+        else:
+            self.status_var.set(
+                f"Loaded {len(self.store.items)} task(s) from {path}"
+            )
 
     def reload_file(self) -> None:
         if not self.store.path:
@@ -591,6 +629,7 @@ class TodoTimerApp:
                 return
             archived_count = self.store.archive_completed(archive_path)
             self.refresh_tree()
+            self.update_connection_status()
             self.status_var.set(
                 f"Archived {archived_count} completed task(s) to {archive_path}"
             )
@@ -861,6 +900,37 @@ class TodoTimerApp:
             f"Running: {format_duration(item.total_elapsed_seconds())} - {item.description[:70]}"
         )
 
+    def update_connection_status(self) -> None:
+        config_ok = self.config_store.loaded
+        config_prefix = "✓" if config_ok else "!"
+        self.config_status_var.set(
+            f"{config_prefix} Config: {self.config_store.path} "
+            f"({self.config_store.load_message})"
+        )
+        self.config_status_label.configure(
+            foreground="#107c10" if config_ok else "#8a6d00"
+        )
+
+        todo_path = self.path_var.get().strip()
+        todo_ok = bool(todo_path) and Path(todo_path).exists()
+        self.todo_status_var.set(
+            f"{'✓' if todo_ok else '!'} todo.txt: "
+            f"{todo_path if todo_path else 'not loaded'}"
+        )
+        self.todo_status_label.configure(
+            foreground="#107c10" if todo_ok else "#8a6d00"
+        )
+
+        archive_path = self.archive_path_var.get().strip()
+        archive_ok = bool(archive_path) and Path(archive_path).exists()
+        self.archive_status_var.set(
+            f"{'✓' if archive_ok else '!'} archive.txt: "
+            f"{archive_path if archive_path else 'not set'}"
+        )
+        self.archive_status_label.configure(
+            foreground="#107c10" if archive_ok else "#8a6d00"
+        )
+
     def _tick(self) -> None:
         if self.store.running_items():
             selected = (
@@ -869,6 +939,7 @@ class TodoTimerApp:
             self.refresh_tree(select_item_id=selected)
         else:
             self._update_running_status()
+        self.update_connection_status()
         self.root.after(1000, self._tick)
 
     def ensure_file_loaded(self) -> None:
@@ -882,6 +953,7 @@ class TodoTimerApp:
             path.parent.mkdir(parents=True, exist_ok=True)
             if not path.exists():
                 path.write_text("", encoding="utf-8")
+            self.update_connection_status()
             return str(path)
 
         path = filedialog.asksaveasfilename(
@@ -912,6 +984,8 @@ class TodoTimerApp:
         self.config.show_completed = self.show_completed_var.get()
         try:
             self.config_store.save(self.config)
+            self.config_store.loaded = True
+            self.config_store.load_message = "Saved config."
         except Exception:
             pass
         self.root.destroy()

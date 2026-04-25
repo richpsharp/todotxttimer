@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, fields, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -160,6 +160,8 @@ class ConfigStore:
     def __init__(self, app_name: str = "TodoTimerTXT") -> None:
         self.app_name = app_name
         self.path = self._default_path(app_name)
+        self.loaded = False
+        self.load_message = "Config not loaded yet."
 
     @staticmethod
     def _default_path(app_name: str) -> Path:
@@ -170,18 +172,37 @@ class ConfigStore:
         return folder / "config.json"
 
     def load(self) -> AppConfig:
+        self.loaded = False
         if not self.path.exists():
+            self.load_message = "Config file not found; using defaults."
             return AppConfig()
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            return AppConfig(**data)
-        except Exception:
+            if not isinstance(data, dict):
+                raise ValueError("Config file must contain a JSON object.")
+            valid_fields = {item.name for item in fields(AppConfig)}
+            filtered = {
+                key: value for key, value in data.items() if key in valid_fields
+            }
+            self.loaded = True
+            ignored = len(data) - len(filtered)
+            if ignored:
+                self.load_message = (
+                    f"Loaded config; ignored {ignored} unknown setting(s)."
+                )
+            else:
+                self.load_message = "Loaded config."
+            return AppConfig(**filtered)
+        except Exception as exc:
+            self.load_message = f"Could not load config: {exc}"
             return AppConfig()
 
     def save(self, config: AppConfig) -> None:
         self.path.write_text(
             json.dumps(asdict(config), indent=2), encoding="utf-8"
         )
+        self.loaded = True
+        self.load_message = "Saved config."
 
 
 class TodoStore:
