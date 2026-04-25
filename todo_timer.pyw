@@ -250,7 +250,7 @@ class TodoTimerApp:
         )
         file_menu.add_command(
             label="Archive completed tasks",
-            accelerator="Ctrl+Alt+A",
+            accelerator="Ctrl+Shift+A",
             command=self.archive_completed_tasks,
         )
         file_menu.add_separator()
@@ -413,7 +413,7 @@ class TodoTimerApp:
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<Control-o>", lambda event: self.choose_file())
         self.root.bind_all("<Control-s>", lambda event: self.save_file())
-        for sequence in ("<Control-Alt-a>", "<Control-Alt-A>"):
+        for sequence in ("<Control-Shift-a>", "<Control-Shift-A>"):
             self.root.bind_all(
                 sequence,
                 lambda event: self.archive_completed_tasks() or "break",
@@ -469,7 +469,7 @@ class TodoTimerApp:
                 "  Alt+Up / Alt+Down change priority\n"
                 "  Ctrl+T start/stop timer\n"
                 "  Ctrl+L open first link\n"
-                "  Ctrl+Alt+A archive completed tasks\n"
+                "  Ctrl+Shift+A archive completed tasks\n"
             ),
             parent=self.root,
         )
