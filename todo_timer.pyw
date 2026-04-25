@@ -661,7 +661,7 @@ class TodoTimerApp:
         table_frame.rowconfigure(0, weight=1)
 
         shortcut_frame = ttk.Frame(outer)
-        shortcut_frame.grid(row=2, column=0, sticky="ew", pady=(8, 8))
+        shortcut_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         ttk.Label(
             shortcut_frame,
             text="[Ctrl+t] start/stop timer | [F2] edit entry | [Ctrl+l] open first link | [x] mark complete | [Del] delete task",
@@ -695,24 +695,24 @@ class TodoTimerApp:
         self.tree.tag_configure("completed", foreground="#7a7a7a")
         self.tree.tag_configure("running", font=("Segoe UI", 9, "bold"))
 
+        idle_status_frame = ttk.Frame(outer)
+        idle_status_frame.grid(row=3, column=0, sticky="ew", pady=(3, 0))
+        idle_status_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            idle_status_frame,
+            textvariable=self.idle_status_var,
+        ).grid(row=0, column=0, sticky="w")
+
         status_frame = ttk.Frame(outer)
-        status_frame.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        status_frame.grid(row=4, column=0, sticky="ew", pady=(3, 0))
         status_frame.columnconfigure(0, weight=1)
         ttk.Label(status_frame, textvariable=self.status_var).grid(
             row=0, column=0, sticky="w"
         )
-        ttk.Label(status_frame, textvariable=self.idle_status_var).grid(
-            row=0, column=1, sticky="e"
-        )
-        ttk.Label(status_frame, textvariable=self.running_var).grid(
-            row=0, column=2, sticky="e", padx=(12, 0)
-        )
 
         connection_frame = ttk.Frame(outer)
-        connection_frame.grid(row=5, column=0, sticky="ew", pady=(4, 0))
-        connection_frame.columnconfigure(0, weight=1)
-        connection_frame.columnconfigure(1, weight=1)
-        connection_frame.columnconfigure(2, weight=1)
+        connection_frame.grid(row=5, column=0, sticky="ew", pady=(3, 0))
+        connection_frame.columnconfigure(3, weight=1)
         self.config_status_label = ttk.Label(
             connection_frame,
             textvariable=self.config_status_var,
@@ -731,7 +731,7 @@ class TodoTimerApp:
             textvariable=self.todo_status_var,
             cursor="hand2",
         )
-        self.todo_status_label.grid(row=0, column=1, sticky="w", padx=(12, 0))
+        self.todo_status_label.grid(row=0, column=1, sticky="w", padx=(3, 0))
         self.todo_status_label.bind(
             "<Button-1>",
             lambda event: self.open_status_file(
@@ -744,7 +744,7 @@ class TodoTimerApp:
             textvariable=self.archive_status_var,
             cursor="hand2",
         )
-        self.archive_status_label.grid(row=0, column=2, sticky="w", padx=(12, 0))
+        self.archive_status_label.grid(row=0, column=2, sticky="w", padx=(3, 0))
         self.archive_status_label.bind(
             "<Button-1>",
             lambda event: self.open_status_file(
