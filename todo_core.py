@@ -149,6 +149,7 @@ class AppConfig:
     last_file: str = ""
     archive_file: str = ""
     openai_api_key: str = ""
+    last_closed_at: str = ""
     window_geometry: str = ""
     sort_mode: str = "priority"
     show_completed: bool = True
