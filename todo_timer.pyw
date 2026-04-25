@@ -5,10 +5,12 @@ from dataclasses import dataclass
 import os
 import subprocess
 import sys
+import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
 from datetime import datetime, timedelta
+from urllib import error, request
 import webbrowser
 
 from todo_core import (
@@ -20,10 +22,13 @@ from todo_core import (
     extract_first_url,
     format_duration,
     is_date_string,
+    parse_todo_line,
 )
 
 APP_TITLE = "TodoTimerTXT"
 DEFAULT_IDLE_TIMEOUT_MINUTES = 10
+REPORT_MODEL = "gpt-5-mini"
+OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 
 
 @dataclass(slots=True)
@@ -108,6 +113,158 @@ class IdleTimerDialog(tk.Toplevel):
     def _finish(self, result: str) -> None:
         self.result = result
         self.destroy()
+
+
+class ReportDateDialog(tk.Toplevel):
+    def __init__(self, master: tk.Misc):
+        super().__init__(master)
+        self.title("Generate report")
+        self.resizable(False, False)
+        self.transient(master)
+        self.result: tuple[str, str] | None = None
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        self.start_var = tk.StringVar(value=today)
+        self.end_var = tk.StringVar(value=today)
+
+        body = ttk.Frame(self, padding=14)
+        body.grid(sticky="nsew")
+
+        ttk.Label(body, text="Start date").grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        ttk.Entry(body, textvariable=self.start_var, width=18).grid(
+            row=0, column=1, sticky="w", pady=(0, 8)
+        )
+        ttk.Label(body, text="End date").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        ttk.Entry(body, textvariable=self.end_var, width=18).grid(
+            row=1, column=1, sticky="w", pady=(0, 8)
+        )
+        ttk.Label(body, text="Use YYYY-MM-DD").grid(
+            row=2, column=1, sticky="w", pady=(0, 10)
+        )
+
+        button_row = ttk.Frame(body)
+        button_row.grid(row=3, column=0, columnspan=2, sticky="e")
+        ttk.Button(button_row, text="Cancel", command=self.destroy).pack(
+            side="right"
+        )
+        ttk.Button(button_row, text="Generate", command=self._on_generate).pack(
+            side="right", padx=(0, 8)
+        )
+
+        self.bind("<Escape>", lambda event: self.destroy())
+        self.bind("<Return>", lambda event: self._on_generate())
+        self.grab_set()
+        self.update_idletasks()
+        self.minsize(self.winfo_width(), self.winfo_height())
+
+    def _on_generate(self) -> None:
+        start_date = self.start_var.get().strip()
+        end_date = self.end_var.get().strip()
+        if not is_date_string(start_date) or not is_date_string(end_date):
+            messagebox.showerror(
+                APP_TITLE,
+                "Start and end dates must use YYYY-MM-DD.",
+                parent=self,
+            )
+            return
+        if start_date > end_date:
+            messagebox.showerror(
+                APP_TITLE,
+                "Start date must be before or equal to end date.",
+                parent=self,
+            )
+            return
+        self.result = (start_date, end_date)
+        self.destroy()
+
+
+class OpenAIKeyDialog(tk.Toplevel):
+    def __init__(self, master: tk.Misc, current_key: str):
+        super().__init__(master)
+        self.title("OpenAI key")
+        self.resizable(True, False)
+        self.transient(master)
+        self.result: str | None = None
+        self.key_var = tk.StringVar(value=current_key)
+
+        body = ttk.Frame(self, padding=14)
+        body.grid(sticky="nsew")
+        body.columnconfigure(0, weight=1)
+
+        ttk.Label(body, text="OpenAI API key").grid(
+            row=0, column=0, sticky="w", pady=(0, 6)
+        )
+        entry = ttk.Entry(body, textvariable=self.key_var, width=72, show="*")
+        entry.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+
+        button_row = ttk.Frame(body)
+        button_row.grid(row=2, column=0, sticky="e")
+        ttk.Button(button_row, text="Cancel", command=self.destroy).pack(
+            side="right"
+        )
+        ttk.Button(button_row, text="Save", command=self._on_save).pack(
+            side="right", padx=(0, 8)
+        )
+
+        self.bind("<Escape>", lambda event: self.destroy())
+        self.bind("<Return>", lambda event: self._on_save())
+        self.grab_set()
+        entry.focus_set()
+        self.update_idletasks()
+        self.minsize(max(520, self.winfo_width()), self.winfo_height())
+
+    def _on_save(self) -> None:
+        self.result = self.key_var.get().strip()
+        self.destroy()
+
+
+class ReportResultDialog(tk.Toplevel):
+    def __init__(self, master: tk.Misc, title: str, report_text: str):
+        super().__init__(master)
+        self.title(title)
+        self.resizable(True, True)
+        self.transient(master)
+
+        body = ttk.Frame(self, padding=10)
+        body.grid(sticky="nsew")
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        text = tk.Text(body, width=100, height=34, wrap="word")
+        text.grid(row=0, column=0, sticky="nsew")
+        text.insert("1.0", report_text)
+        text.configure(state="normal")
+
+        scrollbar = ttk.Scrollbar(body, orient="vertical", command=text.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        text.configure(yscrollcommand=scrollbar.set)
+
+        button_row = ttk.Frame(body)
+        button_row.grid(row=1, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(
+            button_row,
+            text="Close",
+            command=self.destroy,
+        ).pack(side="right")
+        ttk.Button(
+            button_row,
+            text="Copy",
+            command=lambda: self._copy_report(report_text),
+        ).pack(side="right", padx=(0, 8))
+
+        self.bind("<Escape>", lambda event: self.destroy())
+        self.update_idletasks()
+        self.minsize(760, 460)
+
+    def _copy_report(self, report_text: str) -> None:
+        self.clipboard_clear()
+        self.clipboard_append(report_text)
 
 
 class LastInputInfo(ctypes.Structure):
@@ -451,6 +608,17 @@ class TodoTimerApp:
         )
         menu.add_cascade(label="View", menu=view_menu)
 
+        tools_menu = tk.Menu(menu, tearoff=False)
+        tools_menu.add_command(
+            label="Generate report...",
+            command=self.generate_report,
+        )
+        tools_menu.add_command(
+            label="OpenAI key...",
+            command=self.configure_openai_key,
+        )
+        menu.add_cascade(label="Tools", menu=tools_menu)
+
         help_menu = tk.Menu(menu, tearoff=False)
         help_menu.add_command(label="About", command=self.show_about)
         menu.add_cascade(label="Help", menu=help_menu)
@@ -662,6 +830,7 @@ class TodoTimerApp:
                 "  Ctrl+T start/stop timer\n"
                 "  Ctrl+L open first link\n"
                 "  Ctrl+Shift+A archive completed tasks\n"
+                "  Tools > Generate report creates an OpenAI summary from archive.txt\n"
             ),
             parent=self.root,
         )
@@ -806,6 +975,179 @@ class TodoTimerApp:
                 f"Could not archive completed tasks:\n{exc}",
                 parent=self.root,
             )
+
+    def configure_openai_key(self) -> None:
+        dialog = OpenAIKeyDialog(self.root, self.config.openai_api_key)
+        self.root.wait_window(dialog)
+        if dialog.result is None:
+            return
+        self.config.openai_api_key = dialog.result
+        try:
+            self.config_store.save(self.config)
+            self.update_connection_status()
+            self.status_var.set("OpenAI key saved.")
+        except Exception as exc:
+            messagebox.showerror(
+                APP_TITLE,
+                f"Could not save OpenAI key:\n{exc}",
+                parent=self.root,
+            )
+
+    def generate_report(self) -> None:
+        if not self.config.openai_api_key.strip():
+            messagebox.showinfo(
+                APP_TITLE,
+                "Set your OpenAI key before generating a report.",
+                parent=self.root,
+            )
+            self.configure_openai_key()
+            if not self.config.openai_api_key.strip():
+                return
+
+        archive_path = self.archive_path_var.get().strip()
+        if not archive_path:
+            messagebox.showinfo(
+                APP_TITLE,
+                "Choose or create an archive.txt file before generating a report.",
+                parent=self.root,
+            )
+            try:
+                archive_path = self.ensure_archive_file_loaded()
+            except Exception:
+                return
+        archive_file = Path(archive_path)
+        if not archive_file.exists():
+            messagebox.showerror(
+                APP_TITLE,
+                f"Archive file does not exist:\n{archive_file}",
+                parent=self.root,
+            )
+            self.update_connection_status()
+            return
+
+        dialog = ReportDateDialog(self.root)
+        self.root.wait_window(dialog)
+        if not dialog.result:
+            return
+        start_date, end_date = dialog.result
+
+        try:
+            tasks = self.completed_archive_tasks_in_range(
+                archive_file, start_date, end_date
+            )
+            if not tasks:
+                messagebox.showinfo(
+                    APP_TITLE,
+                    (
+                        "No completed archived tasks were found between "
+                        f"{start_date} and {end_date}."
+                    ),
+                    parent=self.root,
+                )
+                return
+            self.status_var.set("Generating report with OpenAI...")
+            self.root.update_idletasks()
+            report = self.generate_openai_report(tasks, start_date, end_date)
+            ReportResultDialog(
+                self.root,
+                f"Report {start_date} to {end_date}",
+                report,
+            )
+            self.status_var.set(
+                f"Generated report for {len(tasks)} archived task(s)."
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                APP_TITLE,
+                f"Could not generate report:\n{exc}",
+                parent=self.root,
+            )
+            self.status_var.set("Report generation failed.")
+
+    def completed_archive_tasks_in_range(
+        self,
+        archive_path: Path,
+        start_date: str,
+        end_date: str,
+    ) -> list[TodoItem]:
+        tasks: list[TodoItem] = []
+        for index, line in enumerate(
+            archive_path.read_text(encoding="utf-8").splitlines()
+        ):
+            if not line.strip():
+                continue
+            item = parse_todo_line(line, line_index=index)
+            if (
+                item.completed
+                and item.completion_date
+                and start_date <= item.completion_date <= end_date
+            ):
+                tasks.append(item)
+        return tasks
+
+    def generate_openai_report(
+        self,
+        tasks: list[TodoItem],
+        start_date: str,
+        end_date: str,
+    ) -> str:
+        task_lines = "\n".join(
+            f"- {item.completion_date}: {item.description} "
+            f"(tracked {format_duration(item.time_spent_seconds)})"
+            for item in tasks
+        )
+        prompt = (
+            "Generate a concise work report from these completed todo.txt tasks.\n\n"
+            f"Date range: {start_date} through {end_date}\n"
+            f"Completed tasks:\n{task_lines}\n\n"
+            "Write a polished report with these sections:\n"
+            "1. Summary\n"
+            "2. Completed Work\n"
+            "3. Themes and Progress\n"
+            "4. Follow-ups or Risks, if any\n"
+            "Keep it practical and grounded only in the task list."
+        )
+        payload = {
+            "model": REPORT_MODEL,
+            "instructions": (
+                "You write clear status reports from completed task lists. "
+                "Do not invent facts that are not implied by the tasks."
+            ),
+            "input": prompt,
+        }
+        data = json.dumps(payload).encode("utf-8")
+        req = request.Request(
+            OPENAI_RESPONSES_URL,
+            data=data,
+            headers={
+                "Authorization": f"Bearer {self.config.openai_api_key.strip()}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=60) as response:
+                response_data = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"OpenAI API error {exc.code}: {detail}") from exc
+        except error.URLError as exc:
+            raise RuntimeError(f"Could not reach OpenAI API: {exc.reason}") from exc
+
+        output_text = response_data.get("output_text")
+        if isinstance(output_text, str) and output_text.strip():
+            return output_text.strip()
+
+        parts: list[str] = []
+        for item in response_data.get("output", []):
+            for content in item.get("content", []):
+                text = content.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        report = "\n".join(parts).strip()
+        if not report:
+            raise RuntimeError("OpenAI response did not include report text.")
+        return report
 
     def quick_add(self) -> None:
         text = self.quick_add_var.get().strip()
@@ -1323,6 +1665,7 @@ class TodoTimerApp:
     def on_close(self) -> None:
         self.config.last_file = self.path_var.get().strip()
         self.config.archive_file = self.archive_path_var.get().strip()
+        self.config.openai_api_key = self.config.openai_api_key.strip()
         self.config.window_geometry = self.root.geometry()
         self.config.sort_mode = self.sort_mode
         self.config.show_completed = self.show_completed_var.get()
