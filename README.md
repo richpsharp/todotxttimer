@@ -23,19 +23,6 @@ This project is a **spiritual successor** to https://github.com/benrhughes/todot
 
 ---
 
-## Why This Exists
-
-The original `todotxt.net` application provided a minimal interface for managing `todo.txt` files on Windows, but it is no longer actively maintained.
-
-This project continues that direction by:
-
-- Rebuilding the experience in Python
-- Making it easier to extend and customize
-- Adding missing features, notably task timers
-- Keeping everything local and transparent
-
----
-
 ## File Format
 
 Tasks remain compatible with the standard `todo.txt` format, with optional metadata extensions for time tracking.
