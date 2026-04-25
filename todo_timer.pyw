@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import ctypes
 from dataclasses import dataclass
+import os
+import subprocess
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
@@ -545,18 +548,42 @@ class TodoTimerApp:
         self.config_status_label = ttk.Label(
             connection_frame,
             textvariable=self.config_status_var,
+            cursor="hand2",
         )
         self.config_status_label.grid(row=0, column=0, sticky="w")
+        self.config_status_label.bind(
+            "<Button-1>",
+            lambda event: self.open_status_file(
+                self.config_store.path,
+                "config.json",
+            ),
+        )
         self.todo_status_label = ttk.Label(
             connection_frame,
             textvariable=self.todo_status_var,
+            cursor="hand2",
         )
         self.todo_status_label.grid(row=0, column=1, sticky="w", padx=(12, 0))
+        self.todo_status_label.bind(
+            "<Button-1>",
+            lambda event: self.open_status_file(
+                self.path_var.get().strip(),
+                "todo.txt",
+            ),
+        )
         self.archive_status_label = ttk.Label(
             connection_frame,
             textvariable=self.archive_status_var,
+            cursor="hand2",
         )
         self.archive_status_label.grid(row=0, column=2, sticky="w", padx=(12, 0))
+        self.archive_status_label.bind(
+            "<Button-1>",
+            lambda event: self.open_status_file(
+                self.archive_path_var.get().strip(),
+                "archive.txt",
+            ),
+        )
 
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<Control-o>", lambda event: self.choose_file())
@@ -966,6 +993,42 @@ class TodoTimerApp:
             return
         webbrowser.open(url)
         self.status_var.set(f"Opened {url}")
+
+    def open_status_file(self, path: str | Path, label: str) -> None:
+        if not path:
+            messagebox.showinfo(
+                APP_TITLE,
+                f"No {label} file is configured.",
+                parent=self.root,
+            )
+            return
+        file_path = Path(path)
+        if not file_path.exists():
+            messagebox.showinfo(
+                APP_TITLE,
+                f"{label} does not exist yet:\n{file_path}",
+                parent=self.root,
+            )
+            self.update_connection_status()
+            return
+        try:
+            self.open_file_in_default_app(file_path)
+            self.status_var.set(f"Opened {label}: {file_path}")
+        except Exception as exc:
+            messagebox.showerror(
+                APP_TITLE,
+                f"Could not open {label}:\n{exc}",
+                parent=self.root,
+            )
+
+    @staticmethod
+    def open_file_in_default_app(path: Path) -> None:
+        if sys.platform.startswith("win"):
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
 
     def configure_idle_timeout(self) -> None:
         minutes = simpledialog.askinteger(
