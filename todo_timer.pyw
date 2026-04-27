@@ -1893,7 +1893,7 @@ class TodoTimerApp:
         if not filter_terms:
             return True
         item_projects = {project.casefold() for project in item.projects}
-        return any(
+        return all(
             (tag not in item_projects if is_excluded else tag in item_projects)
             for tag, is_excluded in filter_terms
         )
