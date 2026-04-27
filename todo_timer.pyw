@@ -718,7 +718,11 @@ class TodoTimerApp:
         self.archive_path_var = tk.StringVar(
             value=self.config.archive_file.strip()
         )
+        self.project_filter_var = tk.StringVar(
+            value=self.config.project_filter.strip()
+        )
         self.status_var = tk.StringVar(value="Open a todo.txt file to begin.")
+        self.filter_status_var = tk.StringVar(value="")
         self.config_status_var = tk.StringVar(value="")
         self.todo_status_var = tk.StringVar(value="")
         self.archive_status_var = tk.StringVar(value="")
@@ -916,28 +920,38 @@ class TodoTimerApp:
         table_frame.rowconfigure(0, weight=1)
 
         shortcut_frame = ttk.Frame(outer)
-        shortcut_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        shortcut_frame.grid(row=4, column=0, sticky="ew", pady=(3, 0))
         ttk.Label(
             shortcut_frame,
             text="[Ctrl+t] start/stop timer | [F2] edit entry | [Ctrl+l] open first link | [x] mark complete | [Del] delete task",
         ).grid(row=0, column=0, sticky="w")
 
-        columns = ("done", "priority", "created", "lastworked", "spent", "task")
+        columns = (
+            "projects",
+            "done",
+            "priority",
+            "created",
+            "lastworked",
+            "spent",
+            "task",
+        )
         self.tree = ttk.Treeview(
             table_frame, columns=columns, show="headings", selectmode="browse"
         )
+        self.tree.heading("projects", text="+ Tags")
         self.tree.heading("done", text="✔️")
         self.tree.heading("priority", text="⚑")
         self.tree.heading("created", text="🌱")
         self.tree.heading("lastworked", text="⚒")
         self.tree.heading("spent", text="⏱️")
         self.tree.heading("task", text="Task")
+        self.tree.column("projects", width=150, anchor="w", stretch=False)
         self.tree.column("done", width=20, anchor="center", stretch=False)
         self.tree.column("priority", width=20, anchor="center", stretch=False)
         self.tree.column("created", width=80, anchor="center", stretch=False)
         self.tree.column("lastworked", width=80, anchor="center", stretch=False)
         self.tree.column("spent", width=70, anchor="center", stretch=False)
-        self.tree.column("task", width=600, anchor="w", stretch=True)
+        self.tree.column("task", width=560, anchor="w", stretch=True)
         self.tree.grid(row=0, column=0, sticky="nsew")
         self.tree.bind("<Double-1>", lambda event: self.edit_selected())
 
@@ -950,8 +964,36 @@ class TodoTimerApp:
         self.tree.tag_configure("completed", foreground="#7a7a7a")
         self.tree.tag_configure("running", font=("Segoe UI", 9, "bold"))
 
+        filter_frame = ttk.Frame(outer)
+        filter_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        filter_frame.columnconfigure(1, weight=1)
+        ttk.Label(filter_frame, text="+ Tag filters").grid(
+            row=0, column=0, sticky="w", padx=(0, 8)
+        )
+        self.project_filter_entry = ttk.Entry(
+            filter_frame,
+            textvariable=self.project_filter_var,
+        )
+        self.project_filter_entry.grid(row=0, column=1, sticky="ew")
+        self.project_filter_entry.bind(
+            "<Escape>",
+            lambda event: self.clear_project_filter() or "break",
+        )
+        self.project_filter_var.trace_add(
+            "write",
+            lambda *args: self.on_project_filter_changed(),
+        )
+
+        filter_status_frame = ttk.Frame(outer)
+        filter_status_frame.grid(row=3, column=0, sticky="ew", pady=(3, 0))
+        filter_status_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            filter_status_frame,
+            textvariable=self.filter_status_var,
+        ).grid(row=0, column=0, sticky="w")
+
         idle_status_frame = ttk.Frame(outer)
-        idle_status_frame.grid(row=3, column=0, sticky="ew", pady=(3, 0))
+        idle_status_frame.grid(row=5, column=0, sticky="ew", pady=(3, 0))
         idle_status_frame.columnconfigure(0, weight=1)
         ttk.Label(
             idle_status_frame,
@@ -959,14 +1001,14 @@ class TodoTimerApp:
         ).grid(row=0, column=0, sticky="w")
 
         status_frame = ttk.Frame(outer)
-        status_frame.grid(row=4, column=0, sticky="ew", pady=(3, 0))
+        status_frame.grid(row=6, column=0, sticky="ew", pady=(3, 0))
         status_frame.columnconfigure(0, weight=1)
         ttk.Label(status_frame, textvariable=self.status_var).grid(
             row=0, column=0, sticky="w"
         )
 
         connection_frame = ttk.Frame(outer)
-        connection_frame.grid(row=5, column=0, sticky="ew", pady=(3, 0))
+        connection_frame.grid(row=7, column=0, sticky="ew", pady=(3, 0))
         connection_frame.columnconfigure(3, weight=1)
         self.config_status_label = ttk.Label(
             connection_frame,
@@ -1814,6 +1856,63 @@ class TodoTimerApp:
             f"Idle timeout set to {self.idle_timeout_minutes} minute(s)."
         )
 
+    def on_project_filter_changed(self) -> None:
+        self.config.project_filter = self.project_filter_var.get().strip()
+        self.refresh_tree()
+
+    def clear_project_filter(self) -> None:
+        if self.project_filter_var.get():
+            self.project_filter_var.set("")
+
+    def project_filter_terms(self) -> list[tuple[str, bool]]:
+        expression = self.project_filter_var.get().strip()
+        if not expression:
+            return []
+
+        terms: list[tuple[str, bool]] = []
+        for raw_tag in expression.split():
+            tag = raw_tag.strip()
+            if not tag:
+                continue
+            if tag.startswith("!"):
+                tag = tag[1:].strip()
+                if not tag:
+                    continue
+            if not tag.startswith("+"):
+                tag = f"+{tag}"
+            term = (tag.casefold(), raw_tag.strip().startswith("!"))
+            if term not in terms:
+                terms.append(term)
+        return terms
+
+    def item_matches_project_filter(
+        self,
+        item: TodoItem,
+        filter_terms: list[tuple[str, bool]],
+    ) -> bool:
+        if not filter_terms:
+            return True
+        item_projects = {project.casefold() for project in item.projects}
+        return all(
+            (tag not in item_projects if is_excluded else tag in item_projects)
+            for tag, is_excluded in filter_terms
+        )
+
+    @staticmethod
+    def format_project_tags(projects: list[str]) -> str:
+        shown = projects[:4]
+        if len(projects) > len(shown):
+            shown.append(f"+{len(projects) - len(shown)}")
+        return " ".join(shown)
+
+    @staticmethod
+    def task_text_without_projects(item: TodoItem) -> str:
+        return " ".join(
+            token
+            for token in item.description.split()
+            if token not in item.projects
+        )
+
     def on_sort_changed(self) -> None:
         self.sort_mode = self.sort_var.get()
         self.refresh_tree()
@@ -1825,12 +1924,18 @@ class TodoTimerApp:
         for child in self.tree.get_children():
             self.tree.delete(child)
 
-        show_completed = self.show_completed_var.get()
-        items = list(
+        visible_by_completion = list(
             self.store.iter_sorted(
-                self.sort_mode, show_completed=show_completed
+                self.sort_mode,
+                show_completed=self.show_completed_var.get(),
             )
         )
+        filter_terms = self.project_filter_terms()
+        items = [
+            item
+            for item in visible_by_completion
+            if self.item_matches_project_filter(item, filter_terms)
+        ]
         for item in items:
             tags: tuple[str, ...] = tuple(
                 tag
@@ -1851,12 +1956,13 @@ class TodoTimerApp:
                 "end",
                 iid=item.id,
                 values=(
+                    self.format_project_tags(item.projects),
                     "x" if item.completed else "",
                     item.priority or "",
                     item.creation_date or "",
                     last_worked,
                     spent + (" ▶" if item.timer_started_at else ""),
-                    item.description,
+                    self.task_text_without_projects(item),
                 ),
                 tags=tags,
             )
@@ -1869,9 +1975,19 @@ class TodoTimerApp:
         total = len(self.store.items)
         complete = sum(item.completed for item in self.store.items)
         incomplete = total - complete
+        visible_total = len(visible_by_completion)
         self.status_var.set(
             f"Tasks: {total} total | {incomplete} incomplete | {complete} complete | Sort: {self.sort_mode}"
         )
+        filter_text = self.project_filter_var.get().strip()
+        if filter_text:
+            self.filter_status_var.set(
+                f"Showing {len(items)} of {visible_total} tasks due to filters: {filter_text}"
+            )
+        else:
+            self.filter_status_var.set(
+                f"Showing {len(items)} of {visible_total} tasks."
+            )
 
     def update_connection_status(self) -> None:
         config_ok = self.config_store.loaded
@@ -2098,6 +2214,7 @@ class TodoTimerApp:
         self.config.last_closed_at = (
             format_timestamp(now) if self.store.running_items() else ""
         )
+        self.config.project_filter = self.project_filter_var.get().strip()
         self.config.window_geometry = self.root.geometry()
         self.config.sort_mode = self.sort_mode
         self.config.show_completed = self.show_completed_var.get()
