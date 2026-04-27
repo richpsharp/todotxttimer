@@ -88,12 +88,6 @@ class ReportTask:
     activity_date: str
 
 
-@dataclass(slots=True)
-class ProjectFilterGroup:
-    required: tuple[str, ...]
-    excluded: tuple[str, ...]
-
-
 class IdleTimerDialog(tk.Toplevel):
     def __init__(self, master: tk.Misc, event: IdleTimerEvent):
         super().__init__(master)
@@ -1870,52 +1864,44 @@ class TodoTimerApp:
         if self.project_filter_var.get():
             self.project_filter_var.set("")
 
-    def project_filter_groups(self) -> list[ProjectFilterGroup]:
+    def project_filter_terms(self) -> list[tuple[str, bool]]:
         expression = self.project_filter_var.get().strip()
         if not expression:
             return []
 
-        groups: list[ProjectFilterGroup] = []
-        for group_text in expression.split("||"):
-            required: list[str] = []
-            excluded: list[str] = []
-            for term_text in group_text.split("&&"):
-                for raw_tag in term_text.replace(",", " ").split():
-                    tag = raw_tag.strip()
-                    if not tag:
-                        continue
-                    is_excluded = tag.startswith("!")
-                    if is_excluded:
-                        tag = tag[1:].strip()
-                        if not tag:
-                            continue
-                    if not tag.startswith("+"):
-                        tag = f"+{tag}"
-                    tag_key = tag.casefold()
-                    target = excluded if is_excluded else required
-                    if tag_key not in target:
-                        target.append(tag_key)
-            if required or excluded:
-                groups.append(
-                    ProjectFilterGroup(
-                        required=tuple(required),
-                        excluded=tuple(excluded),
-                    )
-                )
-        return groups
+        normalized = (
+            expression.replace("&&", " ")
+            .replace("||", " ")
+            .replace(",", " ")
+        )
+        terms: list[tuple[str, bool]] = []
+        for raw_tag in normalized.split():
+            tag = raw_tag.strip()
+            if not tag:
+                continue
+            is_excluded = tag.startswith("!")
+            if is_excluded:
+                tag = tag[1:].strip()
+                if not tag:
+                    continue
+            if not tag.startswith("+"):
+                tag = f"+{tag}"
+            term = (tag.casefold(), is_excluded)
+            if term not in terms:
+                terms.append(term)
+        return terms
 
     def item_matches_project_filter(
         self,
         item: TodoItem,
-        filter_groups: list[ProjectFilterGroup],
+        filter_terms: list[tuple[str, bool]],
     ) -> bool:
-        if not filter_groups:
+        if not filter_terms:
             return True
         item_projects = {project.casefold() for project in item.projects}
         return any(
-            all(tag in item_projects for tag in group.required)
-            and not any(tag in item_projects for tag in group.excluded)
-            for group in filter_groups
+            (tag not in item_projects if is_excluded else tag in item_projects)
+            for tag, is_excluded in filter_terms
         )
 
     @staticmethod
@@ -1942,11 +1928,11 @@ class TodoTimerApp:
                 show_completed=self.show_completed_var.get(),
             )
         )
-        filter_groups = self.project_filter_groups()
+        filter_terms = self.project_filter_terms()
         items = [
             item
             for item in visible_by_completion
-            if self.item_matches_project_filter(item, filter_groups)
+            if self.item_matches_project_filter(item, filter_terms)
         ]
         for item in items:
             tags: tuple[str, ...] = tuple(
