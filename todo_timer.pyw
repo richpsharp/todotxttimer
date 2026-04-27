@@ -1905,6 +1905,14 @@ class TodoTimerApp:
             shown.append(f"+{len(projects) - len(shown)}")
         return " ".join(shown)
 
+    @staticmethod
+    def task_text_without_projects(item: TodoItem) -> str:
+        return " ".join(
+            token
+            for token in item.description.split()
+            if token not in item.projects
+        )
+
     def on_sort_changed(self) -> None:
         self.sort_mode = self.sort_var.get()
         self.refresh_tree()
@@ -1954,7 +1962,7 @@ class TodoTimerApp:
                     item.creation_date or "",
                     last_worked,
                     spent + (" ▶" if item.timer_started_at else ""),
-                    item.description,
+                    self.task_text_without_projects(item),
                 ),
                 tags=tags,
             )
