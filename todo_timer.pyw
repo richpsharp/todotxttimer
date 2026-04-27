@@ -1869,24 +1869,18 @@ class TodoTimerApp:
         if not expression:
             return []
 
-        normalized = (
-            expression.replace("&&", " ")
-            .replace("||", " ")
-            .replace(",", " ")
-        )
         terms: list[tuple[str, bool]] = []
-        for raw_tag in normalized.split():
+        for raw_tag in expression.split():
             tag = raw_tag.strip()
             if not tag:
                 continue
-            is_excluded = tag.startswith("!")
-            if is_excluded:
+            if tag.startswith("!"):
                 tag = tag[1:].strip()
                 if not tag:
                     continue
             if not tag.startswith("+"):
                 tag = f"+{tag}"
-            term = (tag.casefold(), is_excluded)
+            term = (tag.casefold(), raw_tag.strip().startswith("!"))
             if term not in terms:
                 terms.append(term)
         return terms
