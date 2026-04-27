@@ -88,6 +88,12 @@ class ReportTask:
     activity_date: str
 
 
+@dataclass(slots=True)
+class ProjectFilterGroup:
+    required: tuple[str, ...]
+    excluded: tuple[str, ...]
+
+
 class IdleTimerDialog(tk.Toplevel):
     def __init__(self, master: tk.Misc, event: IdleTimerEvent):
         super().__init__(master)
@@ -1864,38 +1870,51 @@ class TodoTimerApp:
         if self.project_filter_var.get():
             self.project_filter_var.set("")
 
-    def project_filter_groups(self) -> list[tuple[str, ...]]:
+    def project_filter_groups(self) -> list[ProjectFilterGroup]:
         expression = self.project_filter_var.get().strip()
         if not expression:
             return []
 
-        groups: list[tuple[str, ...]] = []
+        groups: list[ProjectFilterGroup] = []
         for group_text in expression.split("||"):
-            tags: list[str] = []
+            required: list[str] = []
+            excluded: list[str] = []
             for term_text in group_text.split("&&"):
                 for raw_tag in term_text.replace(",", " ").split():
                     tag = raw_tag.strip()
                     if not tag:
                         continue
+                    is_excluded = tag.startswith("!")
+                    if is_excluded:
+                        tag = tag[1:].strip()
+                        if not tag:
+                            continue
                     if not tag.startswith("+"):
                         tag = f"+{tag}"
                     tag_key = tag.casefold()
-                    if tag_key not in tags:
-                        tags.append(tag_key)
-            if tags:
-                groups.append(tuple(tags))
+                    target = excluded if is_excluded else required
+                    if tag_key not in target:
+                        target.append(tag_key)
+            if required or excluded:
+                groups.append(
+                    ProjectFilterGroup(
+                        required=tuple(required),
+                        excluded=tuple(excluded),
+                    )
+                )
         return groups
 
     def item_matches_project_filter(
         self,
         item: TodoItem,
-        filter_groups: list[tuple[str, ...]],
+        filter_groups: list[ProjectFilterGroup],
     ) -> bool:
         if not filter_groups:
             return True
         item_projects = {project.casefold() for project in item.projects}
         return any(
-            all(tag in item_projects for tag in group)
+            all(tag in item_projects for tag in group.required)
+            and not any(tag in item_projects for tag in group.excluded)
             for group in filter_groups
         )
 
