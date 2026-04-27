@@ -150,6 +150,7 @@ class AppConfig:
     archive_file: str = ""
     openai_api_key: str = ""
     last_closed_at: str = ""
+    project_filter: str = ""
     window_geometry: str = ""
     sort_mode: str = "priority"
     show_completed: bool = True
