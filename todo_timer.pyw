@@ -1028,7 +1028,7 @@ class TodoTimerApp:
         self.tree.bind("<Double-1>", lambda event: self.edit_selected())
         self.tree.bind(
             "<ButtonRelease-1>",
-            lambda event: self.save_tree_column_widths_if_changed(),
+            self.on_tree_button_release,
             add="+",
         )
         self._last_saved_column_widths = self.current_tree_column_widths()
@@ -2059,10 +2059,27 @@ class TodoTimerApp:
             self.tree.heading(
                 column,
                 text=label,
-                command=lambda column=column: self.on_tree_heading_clicked(
-                    column
-                ),
             )
+
+    def tree_column_from_event(self, event: tk.Event[ttk.Treeview]) -> str | None:
+        column_id = event.widget.identify_column(event.x)
+        if not column_id.startswith("#"):
+            return None
+        try:
+            index = int(column_id[1:]) - 1
+        except ValueError:
+            return None
+        if index < 0 or index >= len(TREE_COLUMNS):
+            return None
+        return TREE_COLUMNS[index]
+
+    def on_tree_button_release(self, event: tk.Event[ttk.Treeview]) -> None:
+        if event.widget.identify_region(event.x, event.y) == "heading":
+            column = self.tree_column_from_event(event)
+            if column:
+                self.on_tree_heading_clicked(column)
+            return
+        self.save_tree_column_widths_if_changed()
 
     def on_tree_heading_clicked(self, column: str) -> None:
         if column != self.column_sort_column:
