@@ -1140,12 +1140,8 @@ class TodoTimerApp:
 
         widths: dict[str, int] = {}
         for column in TREE_COLUMN_WIDTHS:
-            raw_width = raw_widths.get(column)
-            if isinstance(raw_width, bool):
-                continue
-            try:
-                width = int(raw_width)
-            except (TypeError, ValueError):
+            width = raw_widths.get(column)
+            if not isinstance(width, int) or isinstance(width, bool):
                 continue
             widths[column] = max(
                 MIN_TREE_COLUMN_WIDTH,
