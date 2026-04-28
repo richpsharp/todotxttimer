@@ -102,6 +102,35 @@ class ReportTask:
     activity_date: str
 
 
+def center_dialog_on_master(dialog: tk.Toplevel, master: tk.Misc) -> None:
+    dialog.update_idletasks()
+    master.update_idletasks()
+
+    dialog_width = dialog.winfo_width()
+    dialog_height = dialog.winfo_height()
+    master_width = master.winfo_width()
+    master_height = master.winfo_height()
+
+    screen_x = dialog.winfo_vrootx()
+    screen_y = dialog.winfo_vrooty()
+    screen_width = dialog.winfo_vrootwidth() or dialog.winfo_screenwidth()
+    screen_height = dialog.winfo_vrootheight() or dialog.winfo_screenheight()
+
+    if master_width > 1 and master_height > 1:
+        x = master.winfo_rootx() + (master_width - dialog_width) // 2
+        y = master.winfo_rooty() + (master_height - dialog_height) // 2
+    else:
+        x = screen_x + (screen_width - dialog_width) // 2
+        y = screen_y + (screen_height - dialog_height) // 2
+
+    max_x = screen_x + max(0, screen_width - dialog_width)
+    max_y = screen_y + max(0, screen_height - dialog_height)
+    x = min(max(x, screen_x), max_x)
+    y = min(max(y, screen_y), max_y)
+
+    dialog.geometry(f"+{x}+{y}")
+
+
 class IdleTimerDialog(tk.Toplevel):
     def __init__(self, master: tk.Misc, event: IdleTimerEvent):
         super().__init__(master)
@@ -158,10 +187,11 @@ class IdleTimerDialog(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", lambda: self._finish("discard_idle"))
         self.bind("<Escape>", lambda event_: self._finish("discard_idle"))
-        self.grab_set()
         self._update_idle_time()
         self.update_idletasks()
+        center_dialog_on_master(self, master)
         self.minsize(self.winfo_width(), self.winfo_height())
+        self.grab_set()
 
     def _current_idle_seconds(self) -> int:
         return max(
@@ -241,9 +271,10 @@ class RunningTimerRecoveryDialog(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", lambda: self._finish("continue"))
         self.bind("<Escape>", lambda event_: self._finish("continue"))
-        self.grab_set()
         self.update_idletasks()
+        center_dialog_on_master(self, master)
         self.minsize(self.winfo_width(), self.winfo_height())
+        self.grab_set()
 
     def _finish(self, result: str) -> None:
         self.result = result
