@@ -154,6 +154,8 @@ class AppConfig:
     column_widths: dict[str, int] = field(default_factory=dict)
     window_geometry: str = ""
     sort_mode: str = "priority"
+    column_sort_column: str = ""
+    column_sort_direction: str = ""
     show_completed: bool = True
     idle_timeout_minutes: int = 10
 
