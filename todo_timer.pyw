@@ -23,6 +23,7 @@ from todo_core import (
     format_duration,
     format_timestamp,
     is_date_string,
+    normalize_sort_text,
     parse_timestamp,
     parse_todo_line,
 )
@@ -31,6 +32,24 @@ APP_TITLE = "TodoTimerTXT"
 DEFAULT_IDLE_TIMEOUT_MINUTES = 10
 REPORT_MODEL = "gpt-5-mini"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+TREE_COLUMNS = (
+    "projects",
+    "done",
+    "priority",
+    "created",
+    "lastworked",
+    "spent",
+    "task",
+)
+TREE_COLUMN_LABELS = {
+    "projects": "+ Tags",
+    "done": "✔️",
+    "priority": "⚑",
+    "created": "🌱",
+    "lastworked": "⚒",
+    "spent": "⏱️",
+    "task": "Task",
+}
 TREE_COLUMN_OPTIONS = {
     "projects": (150, "w", False),
     "done": (20, "center", False),
@@ -45,6 +64,7 @@ TREE_COLUMN_WIDTHS = {
 }
 MIN_TREE_COLUMN_WIDTH = 20
 MAX_TREE_COLUMN_WIDTH = 2000
+COLUMN_SORT_DIRECTIONS = {"asc", "desc"}
 
 
 @dataclass(slots=True)
@@ -753,6 +773,21 @@ class TodoTimerApp:
             self.config.column_widths
         )
         self.sort_mode = self.config.sort_mode or "priority"
+        self.column_sort_column = (
+            self.config.column_sort_column
+            if self.config.column_sort_column in TREE_COLUMNS
+            else ""
+        )
+        self.column_sort_direction = (
+            self.config.column_sort_direction
+            if self.config.column_sort_direction in COLUMN_SORT_DIRECTIONS
+            else ""
+        )
+        if not self.column_sort_column or not self.column_sort_direction:
+            self.column_sort_column = ""
+            self.column_sort_direction = ""
+        self.config.column_sort_column = self.column_sort_column
+        self.config.column_sort_direction = self.column_sort_direction
         self.idle_timeout_minutes = self._normalized_idle_timeout(
             self.config.idle_timeout_minutes
         )
@@ -975,25 +1010,13 @@ class TodoTimerApp:
             text="[Ctrl+t] start/stop timer | [F2] edit entry | [Ctrl+l] open first link | [x] mark complete | [Del] delete task",
         ).grid(row=0, column=0, sticky="w")
 
-        columns = (
-            "projects",
-            "done",
-            "priority",
-            "created",
-            "lastworked",
-            "spent",
-            "task",
-        )
         self.tree = ttk.Treeview(
-            table_frame, columns=columns, show="headings", selectmode="browse"
+            table_frame,
+            columns=TREE_COLUMNS,
+            show="headings",
+            selectmode="browse",
         )
-        self.tree.heading("projects", text="+ Tags")
-        self.tree.heading("done", text="✔️")
-        self.tree.heading("priority", text="⚑")
-        self.tree.heading("created", text="🌱")
-        self.tree.heading("lastworked", text="⚒")
-        self.tree.heading("spent", text="⏱️")
-        self.tree.heading("task", text="Task")
+        self.update_tree_headings()
         for column, (_, anchor, stretch) in TREE_COLUMN_OPTIONS.items():
             self.tree.column(
                 column,
@@ -1005,7 +1028,7 @@ class TodoTimerApp:
         self.tree.bind("<Double-1>", lambda event: self.edit_selected())
         self.tree.bind(
             "<ButtonRelease-1>",
-            lambda event: self.save_tree_column_widths_if_changed(),
+            self.on_tree_button_release,
             add="+",
         )
         self._last_saved_column_widths = self.current_tree_column_widths()
@@ -1164,6 +1187,27 @@ class TodoTimerApp:
     def _record_app_activity(self) -> None:
         self.last_app_activity_at = datetime.now()
 
+    def sync_config_from_state(self) -> None:
+        self.config.last_file = self.path_var.get().strip()
+        self.config.archive_file = self.archive_path_var.get().strip()
+        self.config.openai_api_key = self.config.openai_api_key.strip()
+        self.config.project_filter = self.project_filter_var.get().strip()
+        self.config.column_widths = self.current_tree_column_widths()
+        self.config.window_geometry = self.root.geometry()
+        self.config.sort_mode = self.sort_mode
+        self.config.column_sort_column = self.column_sort_column
+        self.config.column_sort_direction = self.column_sort_direction
+        self.config.show_completed = self.show_completed_var.get()
+        self.config.idle_timeout_minutes = self.idle_timeout_minutes
+
+    def save_current_config(self) -> None:
+        self.sync_config_from_state()
+        try:
+            self.config_store.save(self.config)
+        except Exception:
+            return
+        self.update_connection_status()
+
     @staticmethod
     def normalized_tree_column_widths(raw_widths: object) -> dict[str, int]:
         if not isinstance(raw_widths, dict):
@@ -1197,20 +1241,8 @@ class TodoTimerApp:
         if column_widths == self._last_saved_column_widths:
             return
 
-        self.config.column_widths = column_widths
-        self.config.last_file = self.path_var.get().strip()
-        self.config.archive_file = self.archive_path_var.get().strip()
-        self.config.project_filter = self.project_filter_var.get().strip()
-        self.config.window_geometry = self.root.geometry()
-        self.config.sort_mode = self.sort_mode
-        self.config.show_completed = self.show_completed_var.get()
-        self.config.idle_timeout_minutes = self.idle_timeout_minutes
-        try:
-            self.config_store.save(self.config)
-        except Exception:
-            return
+        self.save_current_config()
         self._last_saved_column_widths = column_widths
-        self.update_connection_status()
 
     def show_about(self) -> None:
         messagebox.showinfo(
@@ -2016,8 +2048,108 @@ class TodoTimerApp:
             if token not in item.projects
         )
 
+    def update_tree_headings(self) -> None:
+        for column in TREE_COLUMNS:
+            label = TREE_COLUMN_LABELS[column]
+            if column == self.column_sort_column:
+                if self.column_sort_direction == "asc":
+                    label = f"{label} ↑"
+                elif self.column_sort_direction == "desc":
+                    label = f"{label} ↓"
+            self.tree.heading(
+                column,
+                text=label,
+            )
+
+    def tree_column_from_event(self, event: tk.Event[ttk.Treeview]) -> str | None:
+        column_id = event.widget.identify_column(event.x)
+        if not column_id.startswith("#"):
+            return None
+        try:
+            index = int(column_id[1:]) - 1
+        except ValueError:
+            return None
+        if index < 0 or index >= len(TREE_COLUMNS):
+            return None
+        return TREE_COLUMNS[index]
+
+    def on_tree_button_release(self, event: tk.Event[ttk.Treeview]) -> None:
+        if event.widget.identify_region(event.x, event.y) == "heading":
+            column = self.tree_column_from_event(event)
+            if column:
+                self.on_tree_heading_clicked(column)
+            return
+        self.save_tree_column_widths_if_changed()
+
+    def on_tree_heading_clicked(self, column: str) -> None:
+        if column != self.column_sort_column:
+            self.column_sort_column = column
+            self.column_sort_direction = "asc"
+        elif self.column_sort_direction == "asc":
+            self.column_sort_direction = "desc"
+        else:
+            self.column_sort_column = ""
+            self.column_sort_direction = ""
+
+        self.update_tree_headings()
+        self.save_current_config()
+        self.refresh_tree()
+
+    def column_sort_text(self, item: TodoItem, column: str) -> str:
+        if column == "projects":
+            value = self.format_project_tags(item.projects)
+        elif column == "done":
+            value = "x" if item.completed else ""
+        elif column == "priority":
+            value = item.priority or ""
+        elif column == "created":
+            value = item.creation_date or ""
+        elif column == "lastworked":
+            value = (
+                item.last_worked_at.strftime("%Y-%m-%d")
+                if item.last_worked_at
+                else "not started"
+            )
+        elif column == "spent":
+            value = format_duration(item.total_elapsed_seconds())
+        elif column == "task":
+            value = self.task_text_without_projects(item)
+        else:
+            value = ""
+        return normalize_sort_text(value)
+
+    def sort_items_for_tree(self, items: list[TodoItem]) -> list[TodoItem]:
+        if (
+            not self.column_sort_column
+            or self.column_sort_direction not in COLUMN_SORT_DIRECTIONS
+        ):
+            return items
+
+        return sorted(
+            items,
+            key=lambda item: self.column_sort_text(
+                item, self.column_sort_column
+            ),
+            reverse=self.column_sort_direction == "desc",
+        )
+
+    def current_sort_description(self) -> str:
+        if not self.column_sort_column:
+            return self.sort_mode
+        label = TREE_COLUMN_LABELS[self.column_sort_column]
+        direction = (
+            "ascending"
+            if self.column_sort_direction == "asc"
+            else "descending"
+        )
+        return f"{label} {direction}"
+
     def on_sort_changed(self) -> None:
         self.sort_mode = self.sort_var.get()
+        self.column_sort_column = ""
+        self.column_sort_direction = ""
+        self.update_tree_headings()
+        self.save_current_config()
         self.refresh_tree()
 
     def refresh_tree(self, select_item_id: str | None = None) -> None:
@@ -2039,6 +2171,7 @@ class TodoTimerApp:
             for item in visible_by_completion
             if self.item_matches_project_filter(item, filter_terms)
         ]
+        items = self.sort_items_for_tree(items)
         for item in items:
             tags: tuple[str, ...] = tuple(
                 tag
@@ -2080,7 +2213,7 @@ class TodoTimerApp:
         incomplete = total - complete
         visible_total = len(visible_by_completion)
         self.status_var.set(
-            f"Tasks: {total} total | {incomplete} incomplete | {complete} complete | Sort: {self.sort_mode}"
+            f"Tasks: {total} total | {incomplete} incomplete | {complete} complete | Sort: {self.current_sort_description()}"
         )
         filter_text = self.project_filter_var.get().strip()
         if filter_text:
@@ -2311,18 +2444,10 @@ class TodoTimerApp:
 
     def on_close(self) -> None:
         now = datetime.now()
-        self.config.last_file = self.path_var.get().strip()
-        self.config.archive_file = self.archive_path_var.get().strip()
-        self.config.openai_api_key = self.config.openai_api_key.strip()
+        self.sync_config_from_state()
         self.config.last_closed_at = (
             format_timestamp(now) if self.store.running_items() else ""
         )
-        self.config.project_filter = self.project_filter_var.get().strip()
-        self.config.column_widths = self.current_tree_column_widths()
-        self.config.window_geometry = self.root.geometry()
-        self.config.sort_mode = self.sort_mode
-        self.config.show_completed = self.show_completed_var.get()
-        self.config.idle_timeout_minutes = self.idle_timeout_minutes
         try:
             self.config_store.save(self.config)
             self.config_store.loaded = True
