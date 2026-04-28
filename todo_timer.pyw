@@ -31,6 +31,20 @@ APP_TITLE = "TodoTimerTXT"
 DEFAULT_IDLE_TIMEOUT_MINUTES = 10
 REPORT_MODEL = "gpt-5-mini"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+TREE_COLUMN_OPTIONS = {
+    "projects": (150, "w", False),
+    "done": (20, "center", False),
+    "priority": (20, "center", False),
+    "created": (80, "center", False),
+    "lastworked": (80, "center", False),
+    "spent": (70, "center", False),
+    "task": (560, "w", True),
+}
+TREE_COLUMN_WIDTHS = {
+    column: options[0] for column, options in TREE_COLUMN_OPTIONS.items()
+}
+MIN_TREE_COLUMN_WIDTH = 20
+MAX_TREE_COLUMN_WIDTH = 2000
 
 
 @dataclass(slots=True)
@@ -704,6 +718,9 @@ class TodoTimerApp:
         self.store = TodoStore()
         self.config_store = ConfigStore(APP_TITLE)
         self.config = self.config_store.load()
+        self.config.column_widths = self.normalized_tree_column_widths(
+            self.config.column_widths
+        )
         self.sort_mode = self.config.sort_mode or "priority"
         self.idle_timeout_minutes = self._normalized_idle_timeout(
             self.config.idle_timeout_minutes
@@ -727,6 +744,7 @@ class TodoTimerApp:
         self.todo_status_var = tk.StringVar(value="")
         self.archive_status_var = tk.StringVar(value="")
         self.idle_status_var = tk.StringVar(value="")
+        self._last_saved_column_widths: dict[str, int] = {}
 
         self._build_styles()
         self._build_menu()
@@ -945,15 +963,21 @@ class TodoTimerApp:
         self.tree.heading("lastworked", text="⚒")
         self.tree.heading("spent", text="⏱️")
         self.tree.heading("task", text="Task")
-        self.tree.column("projects", width=150, anchor="w", stretch=False)
-        self.tree.column("done", width=20, anchor="center", stretch=False)
-        self.tree.column("priority", width=20, anchor="center", stretch=False)
-        self.tree.column("created", width=80, anchor="center", stretch=False)
-        self.tree.column("lastworked", width=80, anchor="center", stretch=False)
-        self.tree.column("spent", width=70, anchor="center", stretch=False)
-        self.tree.column("task", width=560, anchor="w", stretch=True)
+        for column, (_, anchor, stretch) in TREE_COLUMN_OPTIONS.items():
+            self.tree.column(
+                column,
+                width=self.tree_column_width(column),
+                anchor=anchor,
+                stretch=stretch,
+            )
         self.tree.grid(row=0, column=0, sticky="nsew")
         self.tree.bind("<Double-1>", lambda event: self.edit_selected())
+        self.tree.bind(
+            "<ButtonRelease-1>",
+            lambda event: self.save_tree_column_widths_if_changed(),
+            add="+",
+        )
+        self._last_saved_column_widths = self.current_tree_column_widths()
 
         y_scroll = ttk.Scrollbar(
             table_frame, orient="vertical", command=self.tree.yview
@@ -1108,6 +1132,54 @@ class TodoTimerApp:
 
     def _record_app_activity(self) -> None:
         self.last_app_activity_at = datetime.now()
+
+    @staticmethod
+    def normalized_tree_column_widths(raw_widths: object) -> dict[str, int]:
+        if not isinstance(raw_widths, dict):
+            return {}
+
+        widths: dict[str, int] = {}
+        for column in TREE_COLUMN_WIDTHS:
+            width = raw_widths.get(column)
+            if not isinstance(width, int) or isinstance(width, bool):
+                continue
+            widths[column] = max(
+                MIN_TREE_COLUMN_WIDTH,
+                min(width, MAX_TREE_COLUMN_WIDTH),
+            )
+        return widths
+
+    def tree_column_width(self, column: str) -> int:
+        return self.config.column_widths.get(
+            column,
+            TREE_COLUMN_WIDTHS[column],
+        )
+
+    def current_tree_column_widths(self) -> dict[str, int]:
+        return {
+            column: int(self.tree.column(column, "width"))
+            for column in TREE_COLUMN_WIDTHS
+        }
+
+    def save_tree_column_widths_if_changed(self) -> None:
+        column_widths = self.current_tree_column_widths()
+        if column_widths == self._last_saved_column_widths:
+            return
+
+        self.config.column_widths = column_widths
+        self.config.last_file = self.path_var.get().strip()
+        self.config.archive_file = self.archive_path_var.get().strip()
+        self.config.project_filter = self.project_filter_var.get().strip()
+        self.config.window_geometry = self.root.geometry()
+        self.config.sort_mode = self.sort_mode
+        self.config.show_completed = self.show_completed_var.get()
+        self.config.idle_timeout_minutes = self.idle_timeout_minutes
+        try:
+            self.config_store.save(self.config)
+        except Exception:
+            return
+        self._last_saved_column_widths = column_widths
+        self.update_connection_status()
 
     def show_about(self) -> None:
         messagebox.showinfo(
@@ -2215,6 +2287,7 @@ class TodoTimerApp:
             format_timestamp(now) if self.store.running_items() else ""
         )
         self.config.project_filter = self.project_filter_var.get().strip()
+        self.config.column_widths = self.current_tree_column_widths()
         self.config.window_geometry = self.root.geometry()
         self.config.sort_mode = self.sort_mode
         self.config.show_completed = self.show_completed_var.get()

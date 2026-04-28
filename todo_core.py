@@ -151,6 +151,7 @@ class AppConfig:
     openai_api_key: str = ""
     last_closed_at: str = ""
     project_filter: str = ""
+    column_widths: dict[str, int] = field(default_factory=dict)
     window_geometry: str = ""
     sort_mode: str = "priority"
     show_completed: bool = True
