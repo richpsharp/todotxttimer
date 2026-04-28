@@ -1187,6 +1187,27 @@ class TodoTimerApp:
     def _record_app_activity(self) -> None:
         self.last_app_activity_at = datetime.now()
 
+    def sync_config_from_state(self) -> None:
+        self.config.last_file = self.path_var.get().strip()
+        self.config.archive_file = self.archive_path_var.get().strip()
+        self.config.openai_api_key = self.config.openai_api_key.strip()
+        self.config.project_filter = self.project_filter_var.get().strip()
+        self.config.column_widths = self.current_tree_column_widths()
+        self.config.window_geometry = self.root.geometry()
+        self.config.sort_mode = self.sort_mode
+        self.config.column_sort_column = self.column_sort_column
+        self.config.column_sort_direction = self.column_sort_direction
+        self.config.show_completed = self.show_completed_var.get()
+        self.config.idle_timeout_minutes = self.idle_timeout_minutes
+
+    def save_current_config(self) -> None:
+        self.sync_config_from_state()
+        try:
+            self.config_store.save(self.config)
+        except Exception:
+            return
+        self.update_connection_status()
+
     @staticmethod
     def normalized_tree_column_widths(raw_widths: object) -> dict[str, int]:
         if not isinstance(raw_widths, dict):
@@ -1220,22 +1241,8 @@ class TodoTimerApp:
         if column_widths == self._last_saved_column_widths:
             return
 
-        self.config.column_widths = column_widths
-        self.config.last_file = self.path_var.get().strip()
-        self.config.archive_file = self.archive_path_var.get().strip()
-        self.config.project_filter = self.project_filter_var.get().strip()
-        self.config.window_geometry = self.root.geometry()
-        self.config.sort_mode = self.sort_mode
-        self.config.column_sort_column = self.column_sort_column
-        self.config.column_sort_direction = self.column_sort_direction
-        self.config.show_completed = self.show_completed_var.get()
-        self.config.idle_timeout_minutes = self.idle_timeout_minutes
-        try:
-            self.config_store.save(self.config)
-        except Exception:
-            return
+        self.save_current_config()
         self._last_saved_column_widths = column_widths
-        self.update_connection_status()
 
     def show_about(self) -> None:
         messagebox.showinfo(
@@ -2058,8 +2065,6 @@ class TodoTimerApp:
             )
 
     def on_tree_heading_clicked(self, column: str) -> None:
-        if column not in TREE_COLUMNS:
-            return
         if column != self.column_sort_column:
             self.column_sort_column = column
             self.column_sort_direction = "asc"
@@ -2069,42 +2074,32 @@ class TodoTimerApp:
             self.column_sort_column = ""
             self.column_sort_direction = ""
 
-        self.config.column_sort_column = self.column_sort_column
-        self.config.column_sort_direction = self.column_sort_direction
         self.update_tree_headings()
-        self.save_sort_preferences()
+        self.save_current_config()
         self.refresh_tree()
 
-    def save_sort_preferences(self) -> None:
-        self.config.sort_mode = self.sort_mode
-        self.config.column_sort_column = self.column_sort_column
-        self.config.column_sort_direction = self.column_sort_direction
-        try:
-            self.config_store.save(self.config)
-        except Exception:
-            return
-        self.update_connection_status()
-
-    def column_sort_value(
-        self, item: TodoItem, column: str
-    ) -> str | int | None:
+    def column_sort_text(self, item: TodoItem, column: str) -> str:
         if column == "projects":
-            return normalize_sort_text(self.format_project_tags(item.projects))
-        if column == "done":
-            return int(item.completed)
-        if column == "priority":
-            return item.priority
-        if column == "created":
-            return item.creation_date
-        if column == "lastworked":
-            if item.last_worked_at is None:
-                return None
-            return item.last_worked_at.strftime("%Y-%m-%d")
-        if column == "spent":
-            return item.total_elapsed_seconds()
-        if column == "task":
-            return normalize_sort_text(self.task_text_without_projects(item))
-        return None
+            value = self.format_project_tags(item.projects)
+        elif column == "done":
+            value = "x" if item.completed else ""
+        elif column == "priority":
+            value = item.priority or ""
+        elif column == "created":
+            value = item.creation_date or ""
+        elif column == "lastworked":
+            value = (
+                item.last_worked_at.strftime("%Y-%m-%d")
+                if item.last_worked_at
+                else "not started"
+            )
+        elif column == "spent":
+            value = format_duration(item.total_elapsed_seconds())
+        elif column == "task":
+            value = self.task_text_without_projects(item)
+        else:
+            value = ""
+        return normalize_sort_text(value)
 
     def sort_items_for_tree(self, items: list[TodoItem]) -> list[TodoItem]:
         if (
@@ -2113,20 +2108,13 @@ class TodoTimerApp:
         ):
             return items
 
-        with_values: list[tuple[str | int, TodoItem]] = []
-        without_values: list[TodoItem] = []
-        for item in items:
-            value = self.column_sort_value(item, self.column_sort_column)
-            if value is None or value == "":
-                without_values.append(item)
-            else:
-                with_values.append((value, item))
-
-        with_values.sort(
-            key=lambda pair: pair[0],
+        return sorted(
+            items,
+            key=lambda item: self.column_sort_text(
+                item, self.column_sort_column
+            ),
             reverse=self.column_sort_direction == "desc",
         )
-        return [item for _, item in with_values] + without_values
 
     def current_sort_description(self) -> str:
         if not self.column_sort_column:
@@ -2143,10 +2131,8 @@ class TodoTimerApp:
         self.sort_mode = self.sort_var.get()
         self.column_sort_column = ""
         self.column_sort_direction = ""
-        self.config.column_sort_column = ""
-        self.config.column_sort_direction = ""
         self.update_tree_headings()
-        self.save_sort_preferences()
+        self.save_current_config()
         self.refresh_tree()
 
     def refresh_tree(self, select_item_id: str | None = None) -> None:
@@ -2441,20 +2427,10 @@ class TodoTimerApp:
 
     def on_close(self) -> None:
         now = datetime.now()
-        self.config.last_file = self.path_var.get().strip()
-        self.config.archive_file = self.archive_path_var.get().strip()
-        self.config.openai_api_key = self.config.openai_api_key.strip()
+        self.sync_config_from_state()
         self.config.last_closed_at = (
             format_timestamp(now) if self.store.running_items() else ""
         )
-        self.config.project_filter = self.project_filter_var.get().strip()
-        self.config.column_widths = self.current_tree_column_widths()
-        self.config.window_geometry = self.root.geometry()
-        self.config.sort_mode = self.sort_mode
-        self.config.column_sort_column = self.column_sort_column
-        self.config.column_sort_direction = self.column_sort_direction
-        self.config.show_completed = self.show_completed_var.get()
-        self.config.idle_timeout_minutes = self.idle_timeout_minutes
         try:
             self.config_store.save(self.config)
             self.config_store.loaded = True
