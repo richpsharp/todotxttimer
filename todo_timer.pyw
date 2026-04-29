@@ -26,6 +26,7 @@ from todo_core import (
     normalize_sort_text,
     parse_timestamp,
     parse_todo_line,
+    serialize_todo_line,
 )
 
 APP_TITLE = "TodoTimerTXT"
@@ -759,6 +760,66 @@ class TaskDialog(tk.Toplevel):
         self.destroy()
 
 
+class QuickNoteDialog(tk.Toplevel):
+    def __init__(self, master: tk.Misc, item: TodoItem):
+        super().__init__(master)
+        self.title("Append note")
+        self.resizable(True, True)
+        self.transient(master)
+        self.result: str | None = None
+        self.created_at = datetime.now()
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        body = ttk.Frame(self, padding=12)
+        body.grid(sticky="nsew")
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(3, weight=1)
+
+        ttk.Label(
+            body,
+            text="What note do you want to add to this task?",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+        ttk.Label(
+            body,
+            text=serialize_todo_line(item),
+            wraplength=660,
+        ).grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        ttk.Label(
+            body,
+            text=f"Note created at: {self.created_at:%Y-%m-%d %H:%M:%S}",
+        ).grid(row=2, column=0, sticky="w", pady=(0, 8))
+
+        self.note_text = tk.Text(body, height=5, width=78, wrap="word")
+        self.note_text.grid(row=3, column=0, sticky="nsew", pady=(0, 8))
+
+        button_row = ttk.Frame(body)
+        button_row.grid(row=4, column=0, sticky="e", pady=(4, 0))
+        ttk.Button(button_row, text="Cancel", command=self.destroy).pack(
+            side="right"
+        )
+        ttk.Button(button_row, text="Save", command=self._on_save).pack(
+            side="right", padx=(0, 8)
+        )
+
+        self.bind("<Escape>", lambda event: self.destroy())
+        self.bind("<Control-Return>", lambda event: self._on_save())
+        self.note_text.focus_set()
+        self.update_idletasks()
+        center_dialog_on_master(self, master)
+        self.minsize(max(620, self.winfo_width()), self.winfo_height())
+        self.grab_set()
+
+    def _on_save(self) -> None:
+        note = " ".join(self.note_text.get("1.0", "end").split())
+        if not note:
+            messagebox.showerror(APP_TITLE, "Note cannot be empty.", parent=self)
+            return
+        self.result = note
+        self.destroy()
+
+
 class TodoTimerApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
@@ -884,6 +945,11 @@ class TodoTimerApp:
             label="Edit task...", accelerator="F2", command=self.edit_selected
         )
         task_menu.add_command(
+            label="Append note...",
+            accelerator="Ctrl+Alt+A",
+            command=self.append_note_selected,
+        )
+        task_menu.add_command(
             label="Toggle complete",
             accelerator="X",
             command=self.toggle_complete_selected,
@@ -1007,7 +1073,7 @@ class TodoTimerApp:
         shortcut_frame.grid(row=4, column=0, sticky="ew", pady=(3, 0))
         ttk.Label(
             shortcut_frame,
-            text="[Ctrl+t] start/stop timer | [F2] edit entry | [Ctrl+l] open first link | [x] mark complete | [Del] delete task",
+            text="[Ctrl+t] start/stop timer | [F2] edit entry | [Ctrl+Alt+A] append note | [Ctrl+l] open first link | [x] mark complete | [Del] delete task",
         ).grid(row=0, column=0, sticky="w")
 
         self.tree = ttk.Treeview(
@@ -1163,6 +1229,11 @@ class TodoTimerApp:
         self.tree.bind(
             "<Control-t>", lambda event: self.toggle_timer_selected() or "break"
         )
+        for sequence in ("<Control-Alt-a>", "<Control-Alt-A>"):
+            self.root.bind_all(
+                sequence,
+                lambda event: self.append_note_selected() or "break",
+            )
         self.root.bind_all("<Control-l>", lambda event: self.open_first_link())
         for sequence in ("<Control-Alt-Shift-b>", "<Control-Alt-Shift-B>"):
             self.root.bind_all(
@@ -1259,6 +1330,7 @@ class TodoTimerApp:
                 "  F2 edit\n"
                 "  Alt+Up / Alt+Down change priority\n"
                 "  Ctrl+T start/stop timer\n"
+                "  Ctrl+Alt+A append note\n"
                 "  Ctrl+L open first link\n"
                 "  Ctrl+Shift+A archive completed tasks\n"
                 "  Tools > Generate report creates an OpenAI summary from archive.txt\n"
@@ -1800,6 +1872,31 @@ class TodoTimerApp:
         except Exception as exc:
             messagebox.showerror(
                 APP_TITLE, f"Could not update task:\n{exc}", parent=self.root
+            )
+
+    def append_note_selected(self) -> None:
+        item = self.selected_item()
+        if item is None:
+            return
+        dialog = QuickNoteDialog(self.root, item)
+        self.root.wait_window(dialog)
+        if not dialog.result:
+            return
+        timestamp = f"{dialog.created_at:%Y-%m-%d %H:%M:%S}"
+        note_text = f"note created at [{timestamp}]: {dialog.result}"
+        description = " ".join(
+            part
+            for part in [item.description.strip(), note_text]
+            if part
+        )
+        try:
+            self.store.update_item(item.id, description=description)
+            self.store.save()
+            self.refresh_tree(select_item_id=item.id)
+            self.status_var.set("Note appended.")
+        except Exception as exc:
+            messagebox.showerror(
+                APP_TITLE, f"Could not append note:\n{exc}", parent=self.root
             )
 
     def toggle_complete_selected(self) -> None:
