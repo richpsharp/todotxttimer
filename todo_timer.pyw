@@ -820,6 +820,119 @@ class QuickNoteDialog(tk.Toplevel):
         self.destroy()
 
 
+class AdjustTimeDialog(tk.Toplevel):
+    QUICK_MINUTES = (1, 5, 15, 60)
+
+    def __init__(self, master: tk.Misc, item: TodoItem):
+        super().__init__(master)
+        self.title("Adjust tracked time")
+        self.resizable(False, False)
+        self.transient(master)
+        self.result_minutes: int | None = None
+        self.adjustment_var = tk.StringVar(value="+0")
+
+        body = ttk.Frame(self, padding=12)
+        body.grid(sticky="nsew")
+        body.columnconfigure(1, weight=1)
+
+        ttk.Label(body, text="Task").grid(
+            row=0, column=0, sticky="nw", padx=(0, 8), pady=(0, 8)
+        )
+        ttk.Label(
+            body,
+            text=serialize_todo_line(item),
+            wraplength=640,
+        ).grid(row=0, column=1, sticky="ew", pady=(0, 8))
+
+        ttk.Label(body, text="Current time").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        ttk.Label(
+            body,
+            text=format_duration(item.total_elapsed_seconds()),
+        ).grid(row=1, column=1, sticky="w", pady=(0, 8))
+
+        ttk.Label(body, text="Adjustment").grid(
+            row=2, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        adjustment_row = ttk.Frame(body)
+        adjustment_row.grid(row=2, column=1, sticky="w", pady=(0, 8))
+        self.adjustment_entry = ttk.Entry(
+            adjustment_row,
+            textvariable=self.adjustment_var,
+            width=10,
+        )
+        self.adjustment_entry.pack(side="left")
+        ttk.Label(
+            adjustment_row,
+            text="minutes; + adds, - subtracts",
+        ).pack(side="left", padx=(8, 0))
+
+        quick_frame = ttk.LabelFrame(body, text="Quick adjust")
+        quick_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        for minutes in self.QUICK_MINUTES:
+            ttk.Button(
+                quick_frame,
+                text=f"+{minutes}",
+                width=6,
+                command=lambda minutes=minutes: self.add_minutes(minutes),
+            ).pack(side="left", padx=(0, 4), pady=6)
+        for minutes in self.QUICK_MINUTES:
+            ttk.Button(
+                quick_frame,
+                text=f"-{minutes}",
+                width=6,
+                command=lambda minutes=minutes: self.add_minutes(-minutes),
+            ).pack(side="left", padx=(8 if minutes == 1 else 0, 4), pady=6)
+
+        button_row = ttk.Frame(body)
+        button_row.grid(row=4, column=0, columnspan=2, sticky="e", pady=(4, 0))
+        ttk.Button(button_row, text="Cancel", command=self.destroy).pack(
+            side="right"
+        )
+        ttk.Button(button_row, text="Save", command=self._on_save).pack(
+            side="right", padx=(0, 8)
+        )
+
+        self.bind("<Escape>", lambda event: self.destroy())
+        self.bind("<Control-Return>", lambda event: self._on_save())
+        self.adjustment_entry.focus_set()
+        self.adjustment_entry.selection_range(0, "end")
+        self.update_idletasks()
+        center_dialog_on_master(self, master)
+        self.minsize(self.winfo_width(), self.winfo_height())
+        self.grab_set()
+
+    def current_adjustment_minutes(self) -> int:
+        value = self.adjustment_var.get().strip()
+        if not value:
+            return 0
+        return int(value)
+
+    def set_adjustment_minutes(self, minutes: int) -> None:
+        sign = "+" if minutes >= 0 else ""
+        self.adjustment_var.set(f"{sign}{minutes}")
+
+    def add_minutes(self, minutes: int) -> None:
+        try:
+            current = self.current_adjustment_minutes()
+        except ValueError:
+            current = 0
+        self.set_adjustment_minutes(current + minutes)
+
+    def _on_save(self) -> None:
+        try:
+            self.result_minutes = self.current_adjustment_minutes()
+        except ValueError:
+            messagebox.showerror(
+                APP_TITLE,
+                "Adjustment must be whole minutes, like +15 or -5.",
+                parent=self,
+            )
+            return
+        self.destroy()
+
+
 class TodoTimerApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
@@ -963,6 +1076,11 @@ class TodoTimerApp:
             accelerator="Ctrl+T",
             command=self.toggle_timer_selected,
         )
+        task_menu.add_command(
+            label="Adjust tracked time...",
+            accelerator="Ctrl+Alt+T",
+            command=self.adjust_time_selected,
+        )
         task_menu.add_separator()
         task_menu.add_command(
             label="Increase priority",
@@ -1073,7 +1191,7 @@ class TodoTimerApp:
         shortcut_frame.grid(row=4, column=0, sticky="ew", pady=(3, 0))
         ttk.Label(
             shortcut_frame,
-            text="[Ctrl+t] start/stop timer | [F2] edit entry | [Ctrl+Alt+A] append note | [Ctrl+l] open first link | [x] mark complete | [Del] delete task",
+            text="[Ctrl+t] start/stop timer | [Ctrl+Alt+T] adjust time | [F2] edit entry | [Ctrl+Alt+A] append note | [Ctrl+l] open first link | [x] mark complete | [Del] delete task",
         ).grid(row=0, column=0, sticky="w")
 
         self.tree = ttk.Treeview(
@@ -1229,6 +1347,11 @@ class TodoTimerApp:
         self.tree.bind(
             "<Control-t>", lambda event: self.toggle_timer_selected() or "break"
         )
+        for sequence in ("<Control-Alt-t>", "<Control-Alt-T>"):
+            self.root.bind_all(
+                sequence,
+                lambda event: self.adjust_time_selected() or "break",
+            )
         for sequence in ("<Control-Alt-a>", "<Control-Alt-A>"):
             self.root.bind_all(
                 sequence,
@@ -1330,6 +1453,7 @@ class TodoTimerApp:
                 "  F2 edit\n"
                 "  Alt+Up / Alt+Down change priority\n"
                 "  Ctrl+T start/stop timer\n"
+                "  Ctrl+Alt+T adjust tracked time\n"
                 "  Ctrl+Alt+A append note\n"
                 "  Ctrl+L open first link\n"
                 "  Ctrl+Shift+A archive completed tasks\n"
@@ -1966,6 +2090,38 @@ class TodoTimerApp:
         except Exception as exc:
             messagebox.showerror(
                 APP_TITLE, f"Could not toggle timer:\n{exc}", parent=self.root
+            )
+
+    def adjust_time_selected(self) -> None:
+        item = self.selected_item()
+        if item is None:
+            return
+        dialog = AdjustTimeDialog(self.root, item)
+        self.root.wait_window(dialog)
+        if dialog.result_minutes is None:
+            return
+        delta_seconds = dialog.result_minutes * 60
+        try:
+            self.ensure_file_loaded()
+            current_total = item.total_elapsed_seconds()
+            new_total = max(0, current_total + delta_seconds)
+            if item.timer_started_at is None:
+                item.time_spent_seconds = new_total
+            else:
+                item.time_spent_seconds = 0
+                item.timer_started_at = datetime.now() - timedelta(
+                    seconds=new_total
+                )
+            self.store.save()
+            self.refresh_tree(select_item_id=item.id)
+            self.status_var.set(
+                f"Adjusted tracked time to {format_duration(new_total)}."
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                APP_TITLE,
+                f"Could not adjust tracked time:\n{exc}",
+                parent=self.root,
             )
 
     def increase_priority(self) -> None:
