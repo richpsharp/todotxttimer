@@ -33,7 +33,6 @@ APP_TITLE = "TodoTimerTXT"
 DEFAULT_IDLE_TIMEOUT_MINUTES = 10
 REPORT_MODEL = "gpt-5-mini"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
-TK_ALT_MASK = 0x0008
 TREE_COLUMNS = (
     "projects",
     "done",
@@ -1345,19 +1344,11 @@ class TodoTimerApp:
             "x",
             lambda event: self.toggle_complete_selected() or "break",
         )
-        for sequence in ("<Control-Alt-t>", "<Control-Alt-T>"):
-            self.tree.bind(
-                sequence,
-                lambda event: self.adjust_time_selected() or "break",
-            )
+        self.bind_adjust_time_shortcut(self.tree.bind)
         self.tree.bind(
-            "<Control-t>", lambda event: self.handle_timer_shortcut(event)
+            "<Control-t>", lambda event: self.toggle_timer_selected() or "break"
         )
-        for sequence in ("<Control-Alt-t>", "<Control-Alt-T>"):
-            self.root.bind_all(
-                sequence,
-                lambda event: self.adjust_time_selected() or "break",
-            )
+        self.bind_adjust_time_shortcut(self.root.bind_all)
         for sequence in ("<Control-Alt-a>", "<Control-Alt-A>"):
             self.root.bind_all(
                 sequence,
@@ -1370,12 +1361,12 @@ class TodoTimerApp:
                 lambda event: self.debug_trigger_idle_timeout() or "break",
             )
 
-    def handle_timer_shortcut(self, event: tk.Event[tk.Widget]) -> str:
-        if event.state & TK_ALT_MASK:
-            self.adjust_time_selected()
-        else:
-            self.toggle_timer_selected()
-        return "break"
+    def bind_adjust_time_shortcut(self, bind_method) -> None:
+        for sequence in ("<Control-Alt-t>", "<Control-Alt-T>"):
+            bind_method(
+                sequence,
+                lambda event: self.adjust_time_selected() or "break",
+            )
 
     def _bind_activity_tracking(self) -> None:
         for sequence in (
