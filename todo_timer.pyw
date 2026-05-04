@@ -40,6 +40,7 @@ TREE_COLUMNS = (
     "created",
     "lastworked",
     "spent",
+    "today",
     "task",
 )
 TREE_COLUMN_LABELS = {
@@ -49,6 +50,7 @@ TREE_COLUMN_LABELS = {
     "created": "🌱",
     "lastworked": "⚒",
     "spent": "⏱️",
+    "today": "☀️",
     "task": "Task",
 }
 TREE_COLUMN_OPTIONS = {
@@ -58,6 +60,7 @@ TREE_COLUMN_OPTIONS = {
     "created": (80, "center", False),
     "lastworked": (80, "center", False),
     "spent": (70, "center", False),
+    "today": (80, "center", False),
     "task": (560, "w", True),
 }
 TREE_COLUMN_WIDTHS = {
@@ -946,6 +949,7 @@ class TodoTimerApp:
         self.config.column_widths = self.normalized_tree_column_widths(
             self.config.column_widths
         )
+        worked_today_date_changed = self.roll_over_worked_today_if_date_changed()
         self.sort_mode = self.config.sort_mode or "priority"
         self.column_sort_column = (
             self.config.column_sort_column
@@ -1006,6 +1010,17 @@ class TodoTimerApp:
                 self.status_var.set(f"Could not open saved file: {exc}")
         self.update_connection_status()
         self.recover_left_running_timer()
+        had_active_today_segments = bool(
+            self.config.worked_today_active_started_at
+        )
+        self.config.worked_today_active_started_at = {}
+        now = datetime.now()
+        self.roll_over_worked_today_if_date_changed(now)
+        running_items = self.store.running_items()
+        for item in running_items:
+            self.start_worked_today_segment(item, now)
+        if running_items or had_active_today_segments or worked_today_date_changed:
+            self.save_current_config()
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._tick()
@@ -1406,6 +1421,144 @@ class TodoTimerApp:
             return
         self.update_connection_status()
 
+    def roll_over_worked_today_if_date_changed(
+        self,
+        now: datetime | None = None,
+    ) -> bool:
+        current = now or datetime.now()
+        today = current.strftime("%Y-%m-%d")
+        if self.config.worked_today_date != today:
+            self.config.worked_today_date = today
+            self.config.worked_today_seconds = {}
+            self.config.worked_today_active_started_at = {}
+            for item in self.store.running_items():
+                key = self.worked_today_task_signature(item)
+                self.config.worked_today_active_started_at[key] = (
+                    format_timestamp(current)
+                )
+            return True
+
+        raw_seconds = self.config.worked_today_seconds
+        cleaned_seconds: dict[str, int] = {}
+        if isinstance(raw_seconds, dict):
+            for key, value in raw_seconds.items():
+                if not isinstance(key, str) or isinstance(value, bool):
+                    continue
+                try:
+                    cleaned_seconds[key] = max(0, int(value))
+                except (TypeError, ValueError):
+                    continue
+        self.config.worked_today_seconds = cleaned_seconds
+
+        raw_timestamps = self.config.worked_today_active_started_at
+        cleaned_timestamps: dict[str, str] = {}
+        if isinstance(raw_timestamps, dict):
+            for key, value in raw_timestamps.items():
+                if not isinstance(key, str) or not isinstance(value, str):
+                    continue
+                try:
+                    parse_timestamp(value)
+                except TodoFormatError:
+                    continue
+                cleaned_timestamps[key] = value
+        self.config.worked_today_active_started_at = cleaned_timestamps
+        return False
+
+    @staticmethod
+    def worked_today_task_signature(item: TodoItem) -> str:
+        return json.dumps(
+            [item.creation_date or "", item.description],
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+
+    def current_worked_today_seconds(
+        self,
+        item: TodoItem,
+        now: datetime | None = None,
+    ) -> int:
+        current = now or datetime.now()
+        self.roll_over_worked_today_if_date_changed(current)
+        key = self.worked_today_task_signature(item)
+        total = self.config.worked_today_seconds.get(key, 0)
+        started_at = parse_timestamp(
+            self.config.worked_today_active_started_at.get(key)
+        )
+        if started_at is not None and item.timer_started_at is not None:
+            total += max(0, int((current - started_at).total_seconds()))
+        return total
+
+    def start_worked_today_segment(
+        self,
+        item: TodoItem,
+        now: datetime,
+    ) -> None:
+        self.roll_over_worked_today_if_date_changed(now)
+        key = self.worked_today_task_signature(item)
+        self.config.worked_today_active_started_at.setdefault(
+            key,
+            format_timestamp(now),
+        )
+
+    def finish_worked_today_segment(
+        self,
+        item: TodoItem,
+        now: datetime,
+    ) -> None:
+        self.roll_over_worked_today_if_date_changed()
+        key = self.worked_today_task_signature(item)
+        started_at = parse_timestamp(
+            self.config.worked_today_active_started_at.pop(key, None)
+        )
+        if started_at is None:
+            return
+
+        elapsed = max(0, int((now - started_at).total_seconds()))
+        total = self.config.worked_today_seconds.get(key, 0) + elapsed
+        if total:
+            self.config.worked_today_seconds[key] = total
+        else:
+            self.config.worked_today_seconds.pop(key, None)
+
+    def stop_other_task_timers(
+        self,
+        except_item_id: str,
+        now: datetime,
+    ) -> list[TodoItem]:
+        for item in self.store.running_items():
+            if item.id == except_item_id:
+                continue
+            self.finish_worked_today_segment(item, now)
+        return self.store.stop_all_timers(
+            except_item_id=except_item_id,
+            now=now,
+        )
+
+    def preserve_worked_today_totals_after_edit(
+        self,
+        previous_signature: str,
+        item: TodoItem,
+    ) -> None:
+        new_signature = self.worked_today_task_signature(item)
+        if previous_signature == new_signature:
+            return
+
+        old_seconds = self.config.worked_today_seconds.pop(previous_signature, 0)
+        if old_seconds:
+            self.config.worked_today_seconds[new_signature] = (
+                self.config.worked_today_seconds.get(new_signature, 0)
+                + old_seconds
+            )
+        old_started_at = self.config.worked_today_active_started_at.pop(
+            previous_signature,
+            None,
+        )
+        if (
+            old_started_at
+            and new_signature not in self.config.worked_today_active_started_at
+        ):
+            self.config.worked_today_active_started_at[new_signature] = old_started_at
+
     @staticmethod
     def normalized_tree_column_widths(raw_widths: object) -> dict[str, int]:
         if not isinstance(raw_widths, dict):
@@ -1654,6 +1807,22 @@ class TodoTimerApp:
             ):
                 return
             archived_count = self.store.archive_completed(archive_path)
+            loaded_signatures = {
+                self.worked_today_task_signature(item)
+                for item in self.store.items
+            }
+            self.config.worked_today_seconds = {
+                signature: seconds
+                for signature, seconds in self.config.worked_today_seconds.items()
+                if signature in loaded_signatures
+            }
+            self.config.worked_today_active_started_at = {
+                signature: started_at
+                for signature, started_at
+                in self.config.worked_today_active_started_at.items()
+                if signature in loaded_signatures
+            }
+            self.save_current_config()
             self.refresh_tree()
             self.update_connection_status()
             self.status_var.set(
@@ -1979,6 +2148,7 @@ class TodoTimerApp:
         self.root.wait_window(dialog)
         if not dialog.result:
             return
+        previous_worked_today_signature = self.worked_today_task_signature(item)
         try:
             self.store.update_item(
                 item.id,
@@ -1994,7 +2164,12 @@ class TodoTimerApp:
                     item.completion_date = self.today_string()
             else:
                 item.completion_date = None
+            self.preserve_worked_today_totals_after_edit(
+                previous_worked_today_signature,
+                item,
+            )
             self.store.save()
+            self.save_current_config()
             self.refresh_tree(select_item_id=item.id)
             self.status_var.set("Task updated.")
         except Exception as exc:
@@ -2017,9 +2192,15 @@ class TodoTimerApp:
             for part in [item.description.strip(), note_text]
             if part
         )
+        previous_worked_today_signature = self.worked_today_task_signature(item)
         try:
             self.store.update_item(item.id, description=description)
+            self.preserve_worked_today_totals_after_edit(
+                previous_worked_today_signature,
+                item,
+            )
             self.store.save()
+            self.save_current_config()
             self.refresh_tree(select_item_id=item.id)
             self.status_var.set("Note appended.")
         except Exception as exc:
@@ -2032,8 +2213,11 @@ class TodoTimerApp:
         if item is None:
             return
         try:
+            if item.timer_started_at is not None:
+                self.finish_worked_today_segment(item, datetime.now())
             self.store.toggle_complete(item.id, today=self.today_string())
             self.store.save()
+            self.save_current_config()
             self.refresh_tree(select_item_id=item.id)
             self.status_var.set("Completion toggled.")
         except Exception as exc:
@@ -2054,8 +2238,12 @@ class TodoTimerApp:
         ):
             return
         try:
+            signature = self.worked_today_task_signature(item)
+            self.config.worked_today_seconds.pop(signature, None)
+            self.config.worked_today_active_started_at.pop(signature, None)
             self.store.delete_item(item.id)
             self.store.save()
+            self.save_current_config()
             self.refresh_tree()
             self.status_var.set("Task deleted.")
         except Exception as exc:
@@ -2076,10 +2264,13 @@ class TodoTimerApp:
                     parent=self.root,
                 )
                 return
+            now = datetime.now()
             if item.timer_started_at is None:
-                stopped = self.store.stop_all_timers(except_item_id=item.id)
-                self.store.start_timer(item.id)
+                stopped = self.stop_other_task_timers(item.id, now)
+                self.store.start_timer(item.id, now=now)
+                self.start_worked_today_segment(item, now)
                 self.store.save()
+                self.save_current_config()
                 if stopped:
                     self.status_var.set(
                         "Started timer and stopped another running timer."
@@ -2087,8 +2278,10 @@ class TodoTimerApp:
                 else:
                     self.status_var.set("Timer started.")
             else:
-                self.store.stop_timer(item.id)
+                self.finish_worked_today_segment(item, now)
+                self.store.stop_timer(item.id, now=now)
                 self.store.save()
+                self.save_current_config()
                 self.status_var.set("Timer stopped.")
             self.refresh_tree(select_item_id=item.id)
         except Exception as exc:
@@ -2369,6 +2562,13 @@ class TodoTimerApp:
             )
         elif column == "spent":
             value = format_duration(item.total_elapsed_seconds())
+        elif column == "today":
+            worked_today_seconds = self.current_worked_today_seconds(item)
+            value = (
+                format_duration(worked_today_seconds)
+                if worked_today_seconds
+                else ""
+            )
         elif column == "task":
             value = self.task_text_without_projects(item)
         else:
@@ -2429,6 +2629,7 @@ class TodoTimerApp:
             if self.item_matches_project_filter(item, filter_terms)
         ]
         items = self.sort_items_for_tree(items)
+        now = datetime.now()
         for item in items:
             tags: tuple[str, ...] = tuple(
                 tag
@@ -2443,7 +2644,16 @@ class TodoTimerApp:
                 if item.last_worked_at
                 else "not started"
             )
-            spent = format_duration(item.total_elapsed_seconds())
+            spent = format_duration(item.total_elapsed_seconds(now))
+            worked_today_seconds = self.current_worked_today_seconds(
+                item,
+                now=now,
+            )
+            worked_today = (
+                format_duration(worked_today_seconds)
+                if worked_today_seconds
+                else ""
+            )
             self.tree.insert(
                 "",
                 "end",
@@ -2455,6 +2665,7 @@ class TodoTimerApp:
                     item.creation_date or "",
                     last_worked,
                     spent + (" ▶" if item.timer_started_at else ""),
+                    worked_today,
                     self.task_text_without_projects(item),
                 ),
                 tags=tags,
@@ -2588,8 +2799,10 @@ class TodoTimerApp:
             ),
         )
 
+        self.finish_worked_today_segment(item, last_activity_at)
         self.store.stop_timer(item.id, now=detected_at)
         self.store.save()
+        self.save_current_config()
         self.refresh_tree(select_item_id=item.id)
         self.status_var.set("Timer stopped after keyboard/mouse inactivity.")
         self._show_idle_timer_dialog(event)
@@ -2631,16 +2844,27 @@ class TodoTimerApp:
                     )
                     return
                 now = datetime.now()
+                kept_idle_seconds = max(
+                    0,
+                    int((now - event.last_activity_at).total_seconds()),
+                )
+                signature = self.worked_today_task_signature(item)
+                self.config.worked_today_seconds[signature] = (
+                    self.config.worked_today_seconds.get(signature, 0)
+                    + kept_idle_seconds
+                )
                 item.time_spent_seconds += max(
                     0,
                     int((now - event.detected_at).total_seconds()),
                 )
                 item.last_worked_at = now
                 self.store.start_timer(item.id, now=now)
+                self.start_worked_today_segment(item, now)
                 self.status_var.set("Idle time kept; timer is still running.")
             else:
                 self.status_var.set("Timer left stopped after inactivity.")
             self.store.save()
+            self.save_current_config()
             self.refresh_tree(select_item_id=item.id)
         except Exception as exc:
             messagebox.showerror(
@@ -2650,6 +2874,8 @@ class TodoTimerApp:
             )
 
     def _tick(self) -> None:
+        if self.roll_over_worked_today_if_date_changed():
+            self.save_current_config()
         self._check_idle_timer()
         if self.store.running_items():
             selected = (
@@ -2701,6 +2927,8 @@ class TodoTimerApp:
 
     def on_close(self) -> None:
         now = datetime.now()
+        for item in self.store.running_items():
+            self.finish_worked_today_segment(item, now)
         self.sync_config_from_state()
         self.config.last_closed_at = (
             format_timestamp(now) if self.store.running_items() else ""

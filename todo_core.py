@@ -158,6 +158,9 @@ class AppConfig:
     column_sort_direction: str = ""
     show_completed: bool = True
     idle_timeout_minutes: int = 10
+    worked_today_date: str = ""
+    worked_today_seconds: dict[str, int] = field(default_factory=dict)
+    worked_today_active_started_at: dict[str, str] = field(default_factory=dict)
 
 
 class ConfigStore:
