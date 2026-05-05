@@ -1488,6 +1488,16 @@ class TodoTimerApp:
             total += max(0, int((current - started_at).total_seconds()))
         return total
 
+    def total_worked_today_seconds(
+        self,
+        now: datetime | None = None,
+    ) -> int:
+        current = now or datetime.now()
+        return sum(
+            self.current_worked_today_seconds(item, now=current)
+            for item in self.store.items
+        )
+
     def start_worked_today_segment(
         self,
         item: TodoItem,
@@ -2733,13 +2743,17 @@ class TodoTimerApp:
         )
 
     def _update_idle_status(self) -> None:
+        today_total = format_duration(self.total_worked_today_seconds())
         if not self.store.running_items():
-            self.idle_status_var.set("")
+            self.idle_status_var.set(
+                f"Time worked today: {today_total}"
+            )
             return
         idle_seconds = self._current_idle_seconds()
         threshold_seconds = self.idle_timeout_minutes * 60
         remaining_seconds = max(0, threshold_seconds - idle_seconds)
         self.idle_status_var.set(
+            f"Time worked today: {today_total} | "
             "Idle: "
             f"{format_duration(idle_seconds)} | "
             f"Pauses in: {format_duration(remaining_seconds)}"
