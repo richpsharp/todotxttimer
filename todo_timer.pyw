@@ -1163,6 +1163,7 @@ class TodoTimerApp:
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._tick()
+        self.root.after(1000, lambda: self.check_for_updates(manual=False))
 
     def _build_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -1749,12 +1750,18 @@ class TodoTimerApp:
         self.save_current_config()
         self._last_saved_column_widths = column_widths
 
-    def check_for_updates(self) -> None:
+    def check_for_updates(self, *, manual: bool = True) -> None:
         """Checks remote ``main`` for updates and prompts before installing.
+
+        Args:
+            manual: When true, show "up to date" and error dialogs for a user
+                initiated check. Automatic startup checks only interrupt the
+                user when an update is available.
 
         Git command failures are reported to the user and kept inside this
         event handler.
         """
+        previous_status = self.status_var.get()
         try:
             self.status_var.set("Checking for updates...")
             self.root.update_idletasks()
@@ -1772,12 +1779,15 @@ class TodoTimerApp:
                 ["rev-parse", UPDATE_REMOTE_REF],
             ).stdout.strip()
             if local_main == remote_main:
-                self.status_var.set("TodoTimerTXT is up to date.")
-                messagebox.showinfo(
-                    APP_TITLE,
-                    "TodoTimerTXT is up to date.",
-                    parent=self.root,
-                )
+                if manual:
+                    self.status_var.set("TodoTimerTXT is up to date.")
+                    messagebox.showinfo(
+                        APP_TITLE,
+                        "TodoTimerTXT is up to date.",
+                        parent=self.root,
+                    )
+                else:
+                    self.status_var.set(previous_status)
                 return
 
             merge_base = run_git_command(
@@ -1790,12 +1800,15 @@ class TodoTimerApp:
                     "TodoTimerTXT cannot update automatically."
                 )
         except RuntimeError as exc:
-            self.status_var.set("Could not check for updates.")
-            messagebox.showerror(
-                APP_TITLE,
-                f"Could not check for updates:\n\n{exc}",
-                parent=self.root,
-            )
+            if manual:
+                self.status_var.set("Could not check for updates.")
+                messagebox.showerror(
+                    APP_TITLE,
+                    f"Could not check for updates:\n\n{exc}",
+                    parent=self.root,
+                )
+            else:
+                self.status_var.set(previous_status)
             return
 
         self.status_var.set("Update available.")
