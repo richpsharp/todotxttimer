@@ -31,6 +31,7 @@ from todo_core import (
 
 APP_TITLE = "TodoTimerTXT"
 DEFAULT_IDLE_TIMEOUT_MINUTES = 10
+ACTIVE_WITHOUT_TIMER_SECONDS = 60
 REPORT_MODEL = "gpt-5-mini"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 TREE_COLUMNS = (
@@ -235,6 +236,68 @@ class IdleTimerDialog(tk.Toplevel):
         self.result = result
         if self._idle_update_id is not None:
             self.after_cancel(self._idle_update_id)
+        self.destroy()
+
+
+class ActiveWithoutTimerDialog(tk.Toplevel):
+    def __init__(self, master: tk.Misc):
+        """Builds the active-without-timer reminder modal.
+
+        Args:
+            master: Parent Tk widget used for modal ownership and centering.
+
+        Attributes:
+            result: Either ``"start_timer"`` or ``"quit"`` after the dialog
+                closes.
+        """
+        super().__init__(master)
+        self.title("No timer running")
+        self.resizable(False, False)
+        self.transient(master)
+        self.result = "start_timer"
+
+        body = ttk.Frame(self, padding=14)
+        body.grid(sticky="nsew")
+        body.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            body,
+            text=(
+                "You've been working for a minute, but you don't have a "
+                "project or timer going. Do you want to make one now or quit "
+                "TodoTimerTXT?"
+            ),
+            wraplength=520,
+        ).grid(row=0, column=0, sticky="w", pady=(0, 12))
+
+        button_row = ttk.Frame(body)
+        button_row.grid(row=1, column=0, sticky="e")
+        ttk.Button(
+            button_row,
+            text="Quit TodoTimerTXT",
+            command=lambda: self._finish("quit"),
+        ).pack(side="right")
+        ttk.Button(
+            button_row,
+            text="Start a Timer",
+            command=lambda: self._finish("start_timer"),
+        ).pack(side="right", padx=(0, 8))
+
+        self.protocol("WM_DELETE_WINDOW", lambda: self._finish("start_timer"))
+        self.bind("<Escape>", lambda event_: self._finish("start_timer"))
+        self.update_idletasks()
+        center_dialog_on_master(self, master)
+        self.minsize(self.winfo_width(), self.winfo_height())
+        self.grab_set()
+
+    def _finish(self, result: str) -> None:
+        """Stores the selected action and closes the modal.
+
+        Args:
+            result: Dialog action identifier. Expected values are
+                ``"start_timer"`` and ``"quit"``.
+        """
+        self.result = result
         self.destroy()
 
 
@@ -972,6 +1035,9 @@ class TodoTimerApp:
         self.config.idle_timeout_minutes = self.idle_timeout_minutes
         self.last_app_activity_at = datetime.now()
         self.idle_dialog_open = False
+        self.active_without_timer_started_at: datetime | None = None
+        self.active_without_timer_prompt_open = False
+        self.active_without_timer_prompt_shown = False
         self.show_completed_var = tk.BooleanVar(
             value=self.config.show_completed
         )
@@ -2779,6 +2845,59 @@ class TodoTimerApp:
 
         self.trigger_idle_timeout(idle_seconds)
 
+    def _check_active_without_timer(self) -> None:
+        """Shows a reminder after sustained active use with no running timer.
+
+        The watch starts when no task timer is running and system idle time is
+        under ``ACTIVE_WITHOUT_TIMER_SECONDS``. If the user becomes idle for at
+        least that threshold or starts a timer, the watch resets. The prompt is
+        shown once per active stretch to avoid repeated interruptions.
+        """
+        if self.idle_dialog_open or self.active_without_timer_prompt_open:
+            return
+
+        if self.store.running_items():
+            self.active_without_timer_started_at = None
+            self.active_without_timer_prompt_shown = False
+            return
+
+        now = datetime.now()
+        idle_seconds = self._current_idle_seconds()
+        if idle_seconds >= ACTIVE_WITHOUT_TIMER_SECONDS:
+            self.active_without_timer_started_at = None
+            self.active_without_timer_prompt_shown = False
+            return
+
+        if self.active_without_timer_prompt_shown:
+            return
+
+        if self.active_without_timer_started_at is None:
+            self.active_without_timer_started_at = now
+            return
+
+        active_seconds = int(
+            (now - self.active_without_timer_started_at).total_seconds()
+        )
+        if active_seconds < ACTIVE_WITHOUT_TIMER_SECONDS:
+            return
+
+        self.active_without_timer_prompt_open = True
+        self.active_without_timer_prompt_shown = True
+        try:
+            dialog = ActiveWithoutTimerDialog(self.root)
+            self.root.wait_window(dialog)
+            if dialog.result == "quit":
+                self.on_close()
+                return
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+            self.quick_add_entry.focus_set()
+            self.status_var.set("Choose a task or start a timer.")
+        finally:
+            self.active_without_timer_prompt_open = False
+            self._record_app_activity()
+
     def debug_trigger_idle_timeout(self) -> None:
         if self.idle_dialog_open:
             return
@@ -2891,6 +3010,7 @@ class TodoTimerApp:
         if self.roll_over_worked_today_if_date_changed():
             self.save_current_config()
         self._check_idle_timer()
+        self._check_active_without_timer()
         if self.store.running_items():
             selected = (
                 self.tree.selection()[0] if self.tree.selection() else None
