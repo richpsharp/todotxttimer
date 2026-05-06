@@ -34,6 +34,9 @@ DEFAULT_IDLE_TIMEOUT_MINUTES = 10
 ACTIVE_WITHOUT_TIMER_SECONDS = 60
 REPORT_MODEL = "gpt-5-mini"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+UPDATE_REMOTE = "origin"
+UPDATE_BRANCH = "main"
+UPDATE_REMOTE_REF = f"{UPDATE_REMOTE}/{UPDATE_BRANCH}"
 TREE_COLUMNS = (
     "projects",
     "done",
@@ -72,6 +75,53 @@ MAX_TREE_COLUMN_WIDTH = 2000
 COLUMN_SORT_DIRECTIONS = {"asc", "desc"}
 
 
+def run_git_command(
+    repo_path: Path,
+    args: list[str],
+) -> subprocess.CompletedProcess[str]:
+    """Runs a Git command inside the TodoTimerTXT worktree.
+
+    Args:
+        repo_path: Path inside the Git worktree.
+        args: Git arguments after the ``git`` executable. For example,
+            ``["fetch", "origin", "main"]``.
+
+    Returns:
+        Completed process containing text ``stdout`` and ``stderr``.
+
+    Raises:
+        RuntimeError: If Git is unavailable or returns a non-zero exit code.
+    """
+    repo = repo_path.resolve()
+    command = [
+        "git",
+        "-c",
+        f"safe.directory={repo.as_posix()}",
+        "-C",
+        str(repo),
+        *args,
+    ]
+    run_options: dict[str, object] = {
+        "capture_output": True,
+        "text": True,
+        "check": False,
+    }
+    if sys.platform.startswith("win"):
+        run_options["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        result = subprocess.run(command, **run_options)
+    except FileNotFoundError as exc:
+        raise RuntimeError("Git is not installed or is not on PATH.") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        command_text = "git " + " ".join(args)
+        message = f"{command_text} failed."
+        if detail:
+            message = f"{message}\n\n{detail}"
+        raise RuntimeError(message)
+    return result
+
+
 def app_window_title(repo_path: Path) -> str:
     """Builds the main window title with the repository version timestamp.
 
@@ -83,27 +133,12 @@ def app_window_title(repo_path: Path) -> str:
         ``"TodoTimerTXT version: YYYYMMDDHHMMSS"``. If Git cannot provide a
         commit timestamp, returns ``"TodoTimerTXT version: unavailable"``.
     """
-    repo = repo_path.resolve()
-    command = [
-        "git",
-        "-c",
-        f"safe.directory={repo.as_posix()}",
-        "-C",
-        str(repo),
-        "log",
-        "-1",
-        "--format=%ct",
-    ]
-    run_options: dict[str, object] = {
-        "capture_output": True,
-        "text": True,
-        "check": False,
-    }
-    if sys.platform.startswith("win"):
-        run_options["creationflags"] = subprocess.CREATE_NO_WINDOW
-    result = subprocess.run(command, **run_options)
+    try:
+        result = run_git_command(repo_path, ["log", "-1", "--format=%ct"])
+    except RuntimeError:
+        return f"{APP_TITLE} version: unavailable"
     timestamp = result.stdout.strip()
-    if result.returncode != 0 or not timestamp.isdigit():
+    if not timestamp.isdigit():
         return f"{APP_TITLE} version: unavailable"
     version = datetime.fromtimestamp(int(timestamp)).strftime("%Y%m%d%H%M%S")
     return f"{APP_TITLE} version: {version}"
@@ -1039,7 +1074,8 @@ class AdjustTimeDialog(tk.Toplevel):
 class TodoTimerApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title(app_window_title(Path(__file__).resolve().parent))
+        self.repo_path = Path(__file__).resolve().parent
+        self.root.title(app_window_title(self.repo_path))
         self.root.geometry("1180x720")
         self.root.minsize(920, 560)
 
@@ -1265,6 +1301,11 @@ class TodoTimerApp:
         menu.add_cascade(label="Tools", menu=tools_menu)
 
         help_menu = tk.Menu(menu, tearoff=False)
+        help_menu.add_command(
+            label="Check for Updates...",
+            command=self.check_for_updates,
+        )
+        help_menu.add_separator()
         help_menu.add_command(label="About", command=self.show_about)
         menu.add_cascade(label="Help", menu=help_menu)
 
@@ -1707,6 +1748,120 @@ class TodoTimerApp:
 
         self.save_current_config()
         self._last_saved_column_widths = column_widths
+
+    def check_for_updates(self) -> None:
+        """Checks remote ``main`` for updates and prompts before installing.
+
+        Git command failures are reported to the user and kept inside this
+        event handler.
+        """
+        try:
+            self.status_var.set("Checking for updates...")
+            self.root.update_idletasks()
+            run_git_command(
+                self.repo_path,
+                ["rev-parse", "--is-inside-work-tree"],
+            )
+            run_git_command(self.repo_path, ["fetch", UPDATE_REMOTE, UPDATE_BRANCH])
+            local_main = run_git_command(
+                self.repo_path,
+                ["rev-parse", UPDATE_BRANCH],
+            ).stdout.strip()
+            remote_main = run_git_command(
+                self.repo_path,
+                ["rev-parse", UPDATE_REMOTE_REF],
+            ).stdout.strip()
+            if local_main == remote_main:
+                self.status_var.set("TodoTimerTXT is up to date.")
+                messagebox.showinfo(
+                    APP_TITLE,
+                    "TodoTimerTXT is up to date.",
+                    parent=self.root,
+                )
+                return
+
+            merge_base = run_git_command(
+                self.repo_path,
+                ["merge-base", UPDATE_BRANCH, UPDATE_REMOTE_REF],
+            ).stdout.strip()
+            if merge_base != local_main:
+                raise RuntimeError(
+                    "Local main has diverged from origin/main, so "
+                    "TodoTimerTXT cannot update automatically."
+                )
+        except RuntimeError as exc:
+            self.status_var.set("Could not check for updates.")
+            messagebox.showerror(
+                APP_TITLE,
+                f"Could not check for updates:\n\n{exc}",
+                parent=self.root,
+            )
+            return
+
+        self.status_var.set("Update available.")
+        if messagebox.askyesno(
+            APP_TITLE,
+            "A new TodoTimerTXT version is available.\n\n"
+            "Update now? TodoTimerTXT will restart after the update.",
+            parent=self.root,
+        ):
+            self.install_update()
+
+    def install_update(self) -> None:
+        """Fast-forwards local ``main`` and restarts TodoTimerTXT.
+
+        Git and restart failures are reported to the user and kept inside this
+        event handler.
+        """
+        try:
+            tracked_changes = run_git_command(
+                self.repo_path,
+                ["status", "--porcelain", "--untracked-files=no"],
+            ).stdout.strip()
+            if tracked_changes:
+                self.status_var.set("Update blocked by local changes.")
+                messagebox.showwarning(
+                    APP_TITLE,
+                    "TodoTimerTXT cannot update while tracked local changes "
+                    "are present.\n\nCommit, stash, or discard those changes, "
+                    "then try again.",
+                    parent=self.root,
+                )
+                return
+
+            self.status_var.set("Updating TodoTimerTXT...")
+            self.root.update_idletasks()
+            run_git_command(self.repo_path, ["switch", UPDATE_BRANCH])
+            run_git_command(
+                self.repo_path,
+                ["pull", "--ff-only", UPDATE_REMOTE, UPDATE_BRANCH],
+            )
+        except RuntimeError as exc:
+            self.status_var.set("Update failed.")
+            messagebox.showerror(
+                APP_TITLE,
+                f"Could not update TodoTimerTXT:\n\n{exc}",
+                parent=self.root,
+            )
+            return
+
+        script_path = Path(__file__).resolve()
+        restart_options: dict[str, object] = {"cwd": str(self.repo_path)}
+        if sys.platform.startswith("win"):
+            restart_options["creationflags"] = subprocess.CREATE_NO_WINDOW
+        try:
+            subprocess.Popen([sys.executable, str(script_path)], **restart_options)
+        except OSError as exc:
+            self.status_var.set("Updated, but restart failed.")
+            messagebox.showerror(
+                APP_TITLE,
+                f"TodoTimerTXT updated, but could not restart:\n\n{exc}",
+                parent=self.root,
+            )
+            return
+
+        self.status_var.set("Updated TodoTimerTXT; restarting...")
+        self.on_close()
 
     def show_about(self) -> None:
         messagebox.showinfo(
