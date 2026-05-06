@@ -72,6 +72,43 @@ MAX_TREE_COLUMN_WIDTH = 2000
 COLUMN_SORT_DIRECTIONS = {"asc", "desc"}
 
 
+def app_window_title(repo_path: Path) -> str:
+    """Builds the main window title with the repository version timestamp.
+
+    Args:
+        repo_path: Path inside the Git worktree used to query the latest commit.
+
+    Returns:
+        The main window title in the form
+        ``"TodoTimerTXT version: YYYYMMDDHHMMSS"``. If Git cannot provide a
+        commit timestamp, returns ``"TodoTimerTXT version: unavailable"``.
+    """
+    repo = repo_path.resolve()
+    command = [
+        "git",
+        "-c",
+        f"safe.directory={repo.as_posix()}",
+        "-C",
+        str(repo),
+        "log",
+        "-1",
+        "--format=%ct",
+    ]
+    run_options: dict[str, object] = {
+        "capture_output": True,
+        "text": True,
+        "check": False,
+    }
+    if sys.platform.startswith("win"):
+        run_options["creationflags"] = subprocess.CREATE_NO_WINDOW
+    result = subprocess.run(command, **run_options)
+    timestamp = result.stdout.strip()
+    if result.returncode != 0 or not timestamp.isdigit():
+        return f"{APP_TITLE} version: unavailable"
+    version = datetime.fromtimestamp(int(timestamp)).strftime("%Y%m%d%H%M%S")
+    return f"{APP_TITLE} version: {version}"
+
+
 @dataclass(slots=True)
 class IdleTimerEvent:
     item_id: str
@@ -1002,7 +1039,7 @@ class AdjustTimeDialog(tk.Toplevel):
 class TodoTimerApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title(APP_TITLE)
+        self.root.title(app_window_title(Path(__file__).resolve().parent))
         self.root.geometry("1180x720")
         self.root.minsize(920, 560)
 
