@@ -247,13 +247,14 @@ class ActiveWithoutTimerDialog(tk.Toplevel):
             master: Parent Tk widget used for modal ownership and centering.
 
         Attributes:
-            result: Either ``"make_now"`` or ``"quit"`` after the dialog closes.
+            result: Either ``"start_timer"`` or ``"quit"`` after the dialog
+                closes.
         """
         super().__init__(master)
         self.title("No timer running")
         self.resizable(False, False)
         self.transient(master)
-        self.result = "make_now"
+        self.result = "start_timer"
 
         body = ttk.Frame(self, padding=14)
         body.grid(sticky="nsew")
@@ -279,11 +280,11 @@ class ActiveWithoutTimerDialog(tk.Toplevel):
         ttk.Button(
             button_row,
             text="Start a Timer",
-            command=lambda: self._finish("make_now"),
+            command=lambda: self._finish("start_timer"),
         ).pack(side="right", padx=(0, 8))
 
-        self.protocol("WM_DELETE_WINDOW", lambda: self._finish("make_now"))
-        self.bind("<Escape>", lambda event_: self._finish("make_now"))
+        self.protocol("WM_DELETE_WINDOW", lambda: self._finish("start_timer"))
+        self.bind("<Escape>", lambda event_: self._finish("start_timer"))
         self.update_idletasks()
         center_dialog_on_master(self, master)
         self.minsize(self.winfo_width(), self.winfo_height())
@@ -294,7 +295,7 @@ class ActiveWithoutTimerDialog(tk.Toplevel):
 
         Args:
             result: Dialog action identifier. Expected values are
-                ``"make_now"`` and ``"quit"``.
+                ``"start_timer"`` and ``"quit"``.
         """
         self.result = result
         self.destroy()
