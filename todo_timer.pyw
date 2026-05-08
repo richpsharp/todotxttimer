@@ -75,6 +75,172 @@ MAX_TREE_COLUMN_WIDTH = 2000
 COLUMN_SORT_DIRECTIONS = {"asc", "desc"}
 
 
+@dataclass(frozen=True, slots=True)
+class ShortcutSpec:
+    windows: tuple[str, ...]
+    mac: tuple[str, ...]
+    linux: tuple[str, ...]
+    windows_label: str
+    mac_label: str
+    linux_label: str
+
+
+SHORTCUTS = {
+    "open_file": ShortcutSpec(
+        windows=("<Control-o>",),
+        mac=("<Command-o>",),
+        linux=("<Control-o>",),
+        windows_label="Ctrl+O",
+        mac_label="Cmd+O",
+        linux_label="Ctrl+O",
+    ),
+    "save_file": ShortcutSpec(
+        windows=("<Control-s>",),
+        mac=("<Command-s>",),
+        linux=("<Control-s>",),
+        windows_label="Ctrl+S",
+        mac_label="Cmd+S",
+        linux_label="Ctrl+S",
+    ),
+    "reload_file": ShortcutSpec(
+        windows=("<F5>",),
+        mac=("<Command-r>", "<F5>"),
+        linux=("<F5>",),
+        windows_label="F5",
+        mac_label="Cmd+R",
+        linux_label="F5",
+    ),
+    "new_task": ShortcutSpec(
+        windows=("<Control-n>",),
+        mac=("<Command-n>",),
+        linux=("<Control-n>",),
+        windows_label="Ctrl+N",
+        mac_label="Cmd+N",
+        linux_label="Ctrl+N",
+    ),
+    "submit_task": ShortcutSpec(
+        windows=("<Control-Return>",),
+        mac=("<Command-Return>", "<Control-Return>"),
+        linux=("<Control-Return>",),
+        windows_label="Ctrl+Enter",
+        mac_label="Cmd+Enter",
+        linux_label="Ctrl+Enter",
+    ),
+    "archive_completed": ShortcutSpec(
+        windows=("<Control-Shift-a>", "<Control-Shift-A>"),
+        mac=("<Command-Shift-a>", "<Command-Shift-A>"),
+        linux=("<Control-Shift-a>", "<Control-Shift-A>"),
+        windows_label="Ctrl+Shift+A",
+        mac_label="Cmd+Shift+A",
+        linux_label="Ctrl+Shift+A",
+    ),
+    "edit_task": ShortcutSpec(
+        windows=("<F2>",),
+        mac=("<Command-e>", "<F2>"),
+        linux=("<F2>",),
+        windows_label="F2",
+        mac_label="Cmd+E",
+        linux_label="F2",
+    ),
+    "append_note": ShortcutSpec(
+        windows=("<Control-Alt-a>", "<Control-Alt-A>"),
+        mac=("<Command-Option-a>", "<Command-Option-A>"),
+        linux=("<Control-Alt-a>", "<Control-Alt-A>"),
+        windows_label="Ctrl+Alt+A",
+        mac_label="Cmd+Option+A",
+        linux_label="Ctrl+Alt+A",
+    ),
+    "toggle_complete": ShortcutSpec(
+        windows=("x",),
+        mac=("x",),
+        linux=("x",),
+        windows_label="X",
+        mac_label="X",
+        linux_label="X",
+    ),
+    "delete_task": ShortcutSpec(
+        windows=("<Delete>",),
+        mac=("<BackSpace>", "<Delete>"),
+        linux=("<Delete>",),
+        windows_label="Del",
+        mac_label="Delete",
+        linux_label="Del",
+    ),
+    "toggle_timer": ShortcutSpec(
+        windows=("<Control-t>",),
+        mac=("<Command-t>",),
+        linux=("<Control-t>",),
+        windows_label="Ctrl+T",
+        mac_label="Cmd+T",
+        linux_label="Ctrl+T",
+    ),
+    "adjust_time": ShortcutSpec(
+        windows=("<Control-Alt-t>", "<Control-Alt-T>"),
+        mac=("<Command-Option-t>", "<Command-Option-T>"),
+        linux=("<Control-Alt-t>", "<Control-Alt-T>"),
+        windows_label="Ctrl+Alt+T",
+        mac_label="Cmd+Option+T",
+        linux_label="Ctrl+Alt+T",
+    ),
+    "increase_priority": ShortcutSpec(
+        windows=("<Alt-Up>",),
+        mac=("<Command-Option-Up>",),
+        linux=("<Alt-Up>",),
+        windows_label="Alt+Up",
+        mac_label="Cmd+Option+Up",
+        linux_label="Alt+Up",
+    ),
+    "decrease_priority": ShortcutSpec(
+        windows=("<Alt-Down>",),
+        mac=("<Command-Option-Down>",),
+        linux=("<Alt-Down>",),
+        windows_label="Alt+Down",
+        mac_label="Cmd+Option+Down",
+        linux_label="Alt+Down",
+    ),
+    "clear_priority": ShortcutSpec(
+        windows=("<Alt-Left>", "<Alt-Right>"),
+        mac=("<Command-Option-Left>", "<Command-Option-Right>"),
+        linux=("<Alt-Left>", "<Alt-Right>"),
+        windows_label="Alt+Left / Alt+Right",
+        mac_label="Cmd+Option+Left / Cmd+Option+Right",
+        linux_label="Alt+Left / Alt+Right",
+    ),
+    "open_first_link": ShortcutSpec(
+        windows=("<Control-l>",),
+        mac=("<Command-l>",),
+        linux=("<Control-l>",),
+        windows_label="Ctrl+L",
+        mac_label="Cmd+L",
+        linux_label="Ctrl+L",
+    ),
+    "debug_idle_timeout": ShortcutSpec(
+        windows=("<Control-Alt-Shift-b>", "<Control-Alt-Shift-B>"),
+        mac=("<Command-Option-Shift-b>", "<Command-Option-Shift-B>"),
+        linux=("<Control-Alt-Shift-b>", "<Control-Alt-Shift-B>"),
+        windows_label="Ctrl+Alt+Shift+B",
+        mac_label="Cmd+Option+Shift+B",
+        linux_label="Ctrl+Alt+Shift+B",
+    ),
+}
+
+
+def shortcut_platform() -> str:
+    if sys.platform == "darwin":
+        return "mac"
+    if sys.platform.startswith("win"):
+        return "windows"
+    return "linux"
+
+
+def shortcut_sequences(action: str) -> tuple[str, ...]:
+    return getattr(SHORTCUTS[action], shortcut_platform())
+
+
+def shortcut_label(action: str) -> str:
+    return getattr(SHORTCUTS[action], f"{shortcut_platform()}_label")
+
+
 def run_git_command(
     repo_path: Path,
     args: list[str],
@@ -852,7 +1018,8 @@ class TaskDialog(tk.Toplevel):
 
         self._toggle_completion()
         self.bind("<Escape>", lambda event: self.destroy())
-        self.bind("<Control-Return>", lambda event: self._on_save())
+        for sequence in shortcut_sequences("submit_task"):
+            self.bind(sequence, lambda event: self._on_save() or "break")
         self.description_text.focus_set()
         self.grab_set()
         self.update_idletasks()
@@ -942,7 +1109,8 @@ class QuickNoteDialog(tk.Toplevel):
         )
 
         self.bind("<Escape>", lambda event: self.destroy())
-        self.bind("<Control-Return>", lambda event: self._on_save())
+        for sequence in shortcut_sequences("submit_task"):
+            self.bind(sequence, lambda event: self._on_save() or "break")
         self.note_text.focus_set()
         self.update_idletasks()
         center_dialog_on_master(self, master)
@@ -1033,7 +1201,8 @@ class AdjustTimeDialog(tk.Toplevel):
         )
 
         self.bind("<Escape>", lambda event: self.destroy())
-        self.bind("<Control-Return>", lambda event: self._on_save())
+        for sequence in shortcut_sequences("submit_task"):
+            self.bind(sequence, lambda event: self._on_save() or "break")
         self.adjustment_entry.focus_set()
         self.adjustment_entry.selection_range(0, "end")
         self.update_idletasks()
@@ -1178,17 +1347,21 @@ class TodoTimerApp:
         file_menu = tk.Menu(menu, tearoff=False)
         file_menu.add_command(
             label="Open todo.txt...",
-            accelerator="Ctrl+O",
+            accelerator=shortcut_label("open_file"),
             command=self.choose_file,
         )
         file_menu.add_command(
             label="Create new todo.txt...", command=self.create_new_file
         )
         file_menu.add_command(
-            label="Reload", accelerator="F5", command=self.reload_file
+            label="Reload",
+            accelerator=shortcut_label("reload_file"),
+            command=self.reload_file,
         )
         file_menu.add_command(
-            label="Save", accelerator="Ctrl+S", command=self.save_file
+            label="Save",
+            accelerator=shortcut_label("save_file"),
+            command=self.save_file,
         )
         file_menu.add_separator()
         file_menu.add_command(
@@ -1201,7 +1374,7 @@ class TodoTimerApp:
         )
         file_menu.add_command(
             label="Archive completed tasks",
-            accelerator="Ctrl+Shift+A",
+            accelerator=shortcut_label("archive_completed"),
             command=self.archive_completed_tasks,
         )
         file_menu.add_separator()
@@ -1210,52 +1383,56 @@ class TodoTimerApp:
 
         task_menu = tk.Menu(menu, tearoff=False)
         task_menu.add_command(
-            label="Edit task...", accelerator="F2", command=self.edit_selected
+            label="Edit task...",
+            accelerator=shortcut_label("edit_task"),
+            command=self.edit_selected,
         )
         task_menu.add_command(
             label="Append note...",
-            accelerator="Ctrl+Alt+A",
+            accelerator=shortcut_label("append_note"),
             command=self.append_note_selected,
         )
         task_menu.add_command(
             label="Toggle complete",
-            accelerator="X",
+            accelerator=shortcut_label("toggle_complete"),
             command=self.toggle_complete_selected,
         )
         task_menu.add_command(
-            label="Delete task", accelerator="Del", command=self.delete_selected
+            label="Delete task",
+            accelerator=shortcut_label("delete_task"),
+            command=self.delete_selected,
         )
         task_menu.add_separator()
         task_menu.add_command(
             label="Start / stop timer",
-            accelerator="Ctrl+T",
+            accelerator=shortcut_label("toggle_timer"),
             command=self.toggle_timer_selected,
         )
         task_menu.add_command(
             label="Adjust tracked time...",
-            accelerator="Ctrl+Alt+T",
+            accelerator=shortcut_label("adjust_time"),
             command=self.adjust_time_selected,
         )
         task_menu.add_separator()
         task_menu.add_command(
             label="Increase priority",
-            accelerator="Alt+Up",
+            accelerator=shortcut_label("increase_priority"),
             command=self.increase_priority,
         )
         task_menu.add_command(
             label="Decrease priority",
-            accelerator="Alt+Down",
+            accelerator=shortcut_label("decrease_priority"),
             command=self.decrease_priority,
         )
         task_menu.add_command(
             label="Clear priority",
-            accelerator="Alt+Left / Alt+Right",
+            accelerator=shortcut_label("clear_priority"),
             command=self.clear_priority,
         )
         task_menu.add_separator()
         task_menu.add_command(
             label="Open first link",
-            accelerator="Ctrl+L",
+            accelerator=shortcut_label("open_first_link"),
             command=self.open_first_link,
         )
         menu.add_cascade(label="Task", menu=task_menu)
@@ -1324,7 +1501,11 @@ class TodoTimerApp:
 
         ttk.Label(
             add_frame,
-            text="<Ctrl+n> to add new task | <Ctrl+Enter> when done | <Esc> to cancel",
+            text=(
+                f"<{shortcut_label('new_task')}> to add new task | "
+                f"<{shortcut_label('submit_task')}> when done | "
+                "<Esc> to cancel"
+            ),
         ).grid(row=0, column=0, sticky="ew", padx=0, pady=0)
 
         self.quick_add_var = tk.StringVar()
@@ -1334,9 +1515,10 @@ class TodoTimerApp:
         self.quick_add_entry.grid(
             row=1, column=0, sticky="ew", padx=0, pady=(0, 5)
         )
-        self.quick_add_entry.bind(
-            "<Control-Return>", lambda event: self.quick_add() or "break"
-        )
+        for sequence in shortcut_sequences("submit_task"):
+            self.quick_add_entry.bind(
+                sequence, lambda event: self.quick_add() or "break"
+            )
         self.quick_add_entry.bind(
             "<Escape>",
             lambda event: self.tree.focus_set() or "break",
@@ -1351,7 +1533,15 @@ class TodoTimerApp:
         shortcut_frame.grid(row=4, column=0, sticky="ew", pady=(3, 0))
         ttk.Label(
             shortcut_frame,
-            text="[Ctrl+t] start/stop timer | [Ctrl+Alt+T] adjust time | [F2] edit entry | [Ctrl+Alt+A] append note | [Ctrl+l] open first link | [x] mark complete | [Del] delete task",
+            text=(
+                f"[{shortcut_label('toggle_timer')}] start/stop timer | "
+                f"[{shortcut_label('adjust_time')}] adjust time | "
+                f"[{shortcut_label('edit_task')}] edit entry | "
+                f"[{shortcut_label('append_note')}] append note | "
+                f"[{shortcut_label('open_first_link')}] open first link | "
+                f"[{shortcut_label('toggle_complete')}] mark complete | "
+                f"[{shortcut_label('delete_task')}] delete task"
+            ),
         ).grid(row=0, column=0, sticky="w")
 
         self.tree = ttk.Treeview(
@@ -1476,56 +1666,42 @@ class TodoTimerApp:
         self.archive_status_tooltip = ToolTip(self.archive_status_label)
 
     def _bind_shortcuts(self) -> None:
-        self.root.bind_all("<Control-o>", lambda event: self.choose_file())
-        self.root.bind_all("<Control-s>", lambda event: self.save_file())
-        for sequence in ("<Control-Shift-a>", "<Control-Shift-A>"):
+        self.bind_app_shortcut("open_file", self.choose_file)
+        self.bind_app_shortcut("save_file", self.save_file)
+        self.bind_app_shortcut("archive_completed", self.archive_completed_tasks)
+        self.bind_app_shortcut("reload_file", self.reload_file)
+        self.bind_app_shortcut(
+            "new_task",
+            lambda: self.quick_add_entry.focus_set(),
+        )
+        self.bind_tree_shortcut("edit_task", self.edit_selected)
+        self.bind_tree_shortcut("delete_task", self.delete_selected)
+        self.bind_tree_shortcut("increase_priority", self.increase_priority)
+        self.bind_tree_shortcut("decrease_priority", self.decrease_priority)
+        self.bind_app_shortcut("clear_priority", self.clear_priority)
+        self.bind_tree_shortcut("toggle_complete", self.toggle_complete_selected)
+        self.bind_tree_shortcut("adjust_time", self.adjust_time_selected)
+        self.bind_tree_shortcut("toggle_timer", self.toggle_timer_selected)
+        self.bind_app_shortcut("adjust_time", self.adjust_time_selected)
+        self.bind_app_shortcut("append_note", self.append_note_selected)
+        self.bind_app_shortcut("open_first_link", self.open_first_link)
+        self.bind_app_shortcut(
+            "debug_idle_timeout",
+            self.debug_trigger_idle_timeout,
+        )
+
+    def bind_app_shortcut(self, action: str, command) -> None:
+        for sequence in shortcut_sequences(action):
             self.root.bind_all(
                 sequence,
-                lambda event: self.archive_completed_tasks() or "break",
-            )
-        self.root.bind_all("<F5>", lambda event: self.reload_file())
-        self.root.bind_all(
-            "<Control-n>",
-            lambda event: self.quick_add_entry.focus_set() or "break",
-        )
-        self.tree.bind("<F2>", lambda event: self.edit_selected() or "break")
-        self.tree.bind(
-            "<Delete>", lambda event: self.delete_selected() or "break"
-        )
-        self.tree.bind(
-            "<Alt-Up>", lambda event: self.increase_priority() or "break"
-        )
-        self.tree.bind(
-            "<Alt-Down>", lambda event: self.decrease_priority() or "break"
-        )
-        self.root.bind_all("<Alt-Left>", lambda event: self.clear_priority())
-        self.root.bind_all("<Alt-Right>", lambda event: self.clear_priority())
-        self.tree.bind(
-            "x",
-            lambda event: self.toggle_complete_selected() or "break",
-        )
-        self.bind_adjust_time_shortcut(self.tree.bind)
-        self.tree.bind(
-            "<Control-t>", lambda event: self.toggle_timer_selected() or "break"
-        )
-        self.bind_adjust_time_shortcut(self.root.bind_all)
-        for sequence in ("<Control-Alt-a>", "<Control-Alt-A>"):
-            self.root.bind_all(
-                sequence,
-                lambda event: self.append_note_selected() or "break",
-            )
-        self.root.bind_all("<Control-l>", lambda event: self.open_first_link())
-        for sequence in ("<Control-Alt-Shift-b>", "<Control-Alt-Shift-B>"):
-            self.root.bind_all(
-                sequence,
-                lambda event: self.debug_trigger_idle_timeout() or "break",
+                lambda event, command=command: command() or "break",
             )
 
-    def bind_adjust_time_shortcut(self, bind_method) -> None:
-        for sequence in ("<Control-Alt-t>", "<Control-Alt-T>"):
-            bind_method(
+    def bind_tree_shortcut(self, action: str, command) -> None:
+        for sequence in shortcut_sequences(action):
+            self.tree.bind(
                 sequence,
-                lambda event: self.adjust_time_selected() or "break",
+                lambda event, command=command: command() or "break",
             )
 
     def _bind_activity_tracking(self) -> None:
@@ -1887,14 +2063,15 @@ class TodoTimerApp:
                 "  lastworked:YYYY-MM-DD-HH-MM-SS\n"
                 "  active:YYYY-MM-DD-HH-MM-SS\n\n"
                 "Shortcuts:\n"
-                "  Ctrl+O open file\n"
-                "  F2 edit\n"
-                "  Alt+Up / Alt+Down change priority\n"
-                "  Ctrl+T start/stop timer\n"
-                "  Ctrl+Alt+T adjust tracked time\n"
-                "  Ctrl+Alt+A append note\n"
-                "  Ctrl+L open first link\n"
-                "  Ctrl+Shift+A archive completed tasks\n"
+                f"  {shortcut_label('open_file')} open file\n"
+                f"  {shortcut_label('edit_task')} edit\n"
+                f"  {shortcut_label('increase_priority')} / "
+                f"{shortcut_label('decrease_priority')} change priority\n"
+                f"  {shortcut_label('toggle_timer')} start/stop timer\n"
+                f"  {shortcut_label('adjust_time')} adjust tracked time\n"
+                f"  {shortcut_label('append_note')} append note\n"
+                f"  {shortcut_label('open_first_link')} open first link\n"
+                f"  {shortcut_label('archive_completed')} archive completed tasks\n"
                 "  Tools > Generate report creates an OpenAI summary from archive.txt\n"
             ),
             parent=self.root,
