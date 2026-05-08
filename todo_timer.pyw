@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import os
 import subprocess
 import sys
+import threading
 import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -363,6 +364,12 @@ class ReportTask:
     status: str
     source: str
     activity_date: str
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateCheckResult:
+    update_available: bool
+    error_message: str = ""
 
 
 def center_dialog_on_master(dialog: tk.Toplevel, master: tk.Misc) -> None:
@@ -1277,6 +1284,7 @@ class TodoTimerApp:
         self.config.idle_timeout_minutes = self.idle_timeout_minutes
         self.last_app_activity_at = datetime.now()
         self.idle_dialog_open = False
+        self.update_check_running = False
         self.active_without_timer_started_at: datetime | None = None
         self.active_without_timer_prompt_open = False
         self.active_without_timer_prompt_shown = False
@@ -1927,20 +1935,48 @@ class TodoTimerApp:
         self._last_saved_column_widths = column_widths
 
     def check_for_updates(self, *, manual: bool = True) -> None:
-        """Checks remote ``main`` for updates and prompts before installing.
+        """Starts a background update check against remote ``main``.
 
         Args:
             manual: When true, show "up to date" and error dialogs for a user
                 initiated check. Automatic startup checks only interrupt the
                 user when an update is available.
 
-        Git command failures are reported to the user and kept inside this
-        event handler.
+        Git work runs on a background thread. Tkinter status updates and
+        dialogs are scheduled back onto the main event loop.
         """
+        if self.update_check_running:
+            if manual:
+                messagebox.showinfo(
+                    APP_TITLE,
+                    "An update check is already running.",
+                    parent=self.root,
+                )
+            return
+
         previous_status = self.status_var.get()
+        self.update_check_running = True
+        self.status_var.set("Checking for updates...")
+
+        def worker() -> None:
+            result = self._check_for_updates_in_background()
+            try:
+                self.root.after(
+                    0,
+                    lambda: self._finish_update_check(
+                        result,
+                        manual=manual,
+                        previous_status=previous_status,
+                    ),
+                )
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _check_for_updates_in_background(self) -> UpdateCheckResult:
+        """Runs update-check Git commands away from the Tk event loop."""
         try:
-            self.status_var.set("Checking for updates...")
-            self.root.update_idletasks()
             run_git_command(
                 self.repo_path,
                 ["rev-parse", "--is-inside-work-tree"],
@@ -1955,16 +1991,7 @@ class TodoTimerApp:
                 ["rev-parse", UPDATE_REMOTE_REF],
             ).stdout.strip()
             if local_main == remote_main:
-                if manual:
-                    self.status_var.set("TodoTimerTXT is up to date.")
-                    messagebox.showinfo(
-                        APP_TITLE,
-                        "TodoTimerTXT is up to date.",
-                        parent=self.root,
-                    )
-                else:
-                    self.status_var.set(previous_status)
-                return
+                return UpdateCheckResult(update_available=False)
 
             merge_base = run_git_command(
                 self.repo_path,
@@ -1976,11 +2003,41 @@ class TodoTimerApp:
                     "TodoTimerTXT cannot update automatically."
                 )
         except RuntimeError as exc:
+            return UpdateCheckResult(
+                update_available=False,
+                error_message=str(exc),
+            )
+
+        return UpdateCheckResult(update_available=True)
+
+    def _finish_update_check(
+        self,
+        result: UpdateCheckResult,
+        *,
+        manual: bool,
+        previous_status: str,
+    ) -> None:
+        """Applies a completed update-check result on the Tk event loop."""
+        self.update_check_running = False
+
+        if result.error_message:
+            if not manual:
+                self.status_var.set(previous_status)
+                return
+            self.status_var.set("Could not check for updates.")
+            messagebox.showerror(
+                APP_TITLE,
+                f"Could not check for updates:\n\n{result.error_message}",
+                parent=self.root,
+            )
+            return
+
+        if not result.update_available:
             if manual:
-                self.status_var.set("Could not check for updates.")
-                messagebox.showerror(
+                self.status_var.set("TodoTimerTXT is up to date.")
+                messagebox.showinfo(
                     APP_TITLE,
-                    f"Could not check for updates:\n\n{exc}",
+                    "TodoTimerTXT is up to date.",
                     parent=self.root,
                 )
             else:
