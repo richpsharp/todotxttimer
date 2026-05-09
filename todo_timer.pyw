@@ -1346,12 +1346,12 @@ class ReallocateTimeDialog(tk.Toplevel):
         ttk.Button(
             quick_frame,
             text="All",
-            command=self.set_all_time,
+            command=lambda: self.amount_var.set("ALL"),
         ).pack(side="left", padx=(0, 6))
         ttk.Button(
             quick_frame,
             text="Reset",
-            command=self.reset_time,
+            command=lambda: self.amount_var.set(""),
         ).pack(side="left", padx=(0, 6))
         for minutes in self.QUICK_MINUTES:
             ttk.Button(
@@ -1399,40 +1399,30 @@ class ReallocateTimeDialog(tk.Toplevel):
         else:
             self.new_task_text.focus_set()
 
-    def current_amount_seconds(self) -> int:
+    def add_minutes(self, minutes: int) -> None:
         value = self.amount_var.get().strip()
         if not value:
-            return 0
-        if value.casefold() == "all":
-            return self.active_seconds
-        minutes = int(value)
-        return max(0, minutes * 60)
-
-    def set_amount_seconds(self, seconds: int) -> None:
-        seconds = min(max(0, seconds), self.active_seconds)
-        if seconds == self.active_seconds:
-            self.amount_var.set("ALL")
-            return
-        minutes = seconds // 60
-        self.amount_var.set(str(minutes))
-
-    def set_all_time(self) -> None:
-        self.amount_var.set("ALL")
-
-    def reset_time(self) -> None:
-        self.amount_var.set("")
-
-    def add_minutes(self, minutes: int) -> None:
-        try:
-            current = self.current_amount_seconds()
-        except ValueError:
             current = 0
-        self.set_amount_seconds(current + minutes * 60)
+        elif value.casefold() == "all":
+            current = self.active_seconds
+        elif value.lstrip("-").isdigit():
+            current = max(0, int(value) * 60)
+        else:
+            current = 0
+        seconds = min(max(0, current + minutes * 60), self.active_seconds)
+        self.amount_var.set(
+            "ALL" if seconds == self.active_seconds else str(seconds // 60)
+        )
 
     def _on_save(self) -> None:
+        amount_value = self.amount_var.get().strip()
         try:
             reallocated_seconds = min(
-                self.current_amount_seconds(),
+                (
+                    self.active_seconds
+                    if amount_value.casefold() == "all"
+                    else max(0, int(amount_value or "0") * 60)
+                ),
                 self.active_seconds,
             )
         except ValueError:
