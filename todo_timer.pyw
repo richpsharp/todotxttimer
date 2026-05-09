@@ -145,10 +145,10 @@ SHORTCUTS = {
     ),
     "append_note": ShortcutSpec(
         windows=("<Control-Alt-a>", "<Control-Alt-A>"),
-        mac=("<Command-Option-a>", "<Command-Option-A>"),
+        mac=("<Command-Shift-n>", "<Command-Shift-N>"),
         linux=("<Control-Alt-a>", "<Control-Alt-A>"),
         windows_label="Ctrl+Alt+A",
-        mac_label="Cmd+Option+A",
+        mac_label="Cmd+Shift+N",
         linux_label="Ctrl+Alt+A",
     ),
     "toggle_complete": ShortcutSpec(
