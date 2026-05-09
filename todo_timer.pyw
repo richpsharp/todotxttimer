@@ -3705,9 +3705,11 @@ class TodoTimerApp:
 
     def _update_idle_status(self) -> None:
         today_total = format_duration(self.total_worked_today_seconds())
-        if not self.store.running_items():
+        running_items = self.store.running_items()
+        check_in_status = self._check_in_status_text(running_items)
+        if not running_items:
             self.idle_status_var.set(
-                f"Time worked today: {today_total}"
+                f"Time worked today: {today_total} | {check_in_status}"
             )
             return
         idle_seconds = self._current_idle_seconds()
@@ -3717,8 +3719,30 @@ class TodoTimerApp:
             f"Time worked today: {today_total} | "
             "Idle: "
             f"{format_duration(idle_seconds)} | "
-            f"Pauses in: {format_duration(remaining_seconds)}"
+            f"Pauses in: {format_duration(remaining_seconds)} | "
+            f"{check_in_status}"
         )
+
+    def _check_in_status_text(self, running_items: list[TodoItem]) -> str:
+        if self.check_in_interval_minutes <= 0:
+            return "Time until check-in: disabled"
+
+        active_items = [
+            item
+            for item in running_items
+            if not item.completed and item.timer_started_at is not None
+        ]
+        if len(active_items) != 1:
+            return "Time until check-in: no running timer"
+
+        interval_seconds = self.check_in_interval_minutes * 60
+        started_at = active_items[0].timer_started_at
+        elapsed_seconds = max(
+            0,
+            int((datetime.now() - started_at).total_seconds()),
+        )
+        remaining_seconds = interval_seconds - (elapsed_seconds % interval_seconds)
+        return f"Time until check-in: {format_duration(remaining_seconds)}"
 
     def _current_idle_seconds(self) -> int:
         system_idle_seconds = get_system_idle_seconds()
