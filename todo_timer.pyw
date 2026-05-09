@@ -1344,12 +1344,24 @@ class ReallocateTimeDialog(tk.Toplevel):
             text="All",
             command=self.set_all_time,
         ).pack(side="left", padx=(0, 6))
+        ttk.Button(
+            quick_frame,
+            text="Reset",
+            command=self.reset_time,
+        ).pack(side="left", padx=(0, 6))
         for minutes in self.QUICK_MINUTES:
             ttk.Button(
                 quick_frame,
                 text=f"+{minutes}",
                 width=6,
                 command=lambda minutes=minutes: self.add_minutes(minutes),
+            ).pack(side="left", padx=(0, 6))
+        for minutes in self.QUICK_MINUTES:
+            ttk.Button(
+                quick_frame,
+                text=f"-{minutes}",
+                width=6,
+                command=lambda minutes=minutes: self.add_minutes(-minutes),
             ).pack(side="left", padx=(0, 6))
 
         ttk.Label(
@@ -1402,6 +1414,9 @@ class ReallocateTimeDialog(tk.Toplevel):
 
     def set_all_time(self) -> None:
         self.amount_var.set("ALL")
+
+    def reset_time(self) -> None:
+        self.amount_var.set("")
 
     def add_minutes(self, minutes: int) -> None:
         try:
@@ -3098,15 +3113,13 @@ class TodoTimerApp:
             destination_item = dialog.result["destination_item"]
             new_task_text = str(dialog.result["new_task_text"])
             if destination_item is None:
-                destination_item = parse_todo_line(
-                    new_task_text,
-                    line_index=len(self.store.items),
-                )
+                destination_item = self.store.add_from_text(new_task_text)
                 if destination_item.completed:
+                    self.store.delete_item(destination_item.id)
                     raise RuntimeError("Destination task cannot be completed.")
                 if not destination_item.creation_date:
                     destination_item.creation_date = self.today_string()
-                self.store.items.append(destination_item)
+                destination_item = self.store.get_by_id(destination_item.id)
 
             self.apply_timer_reallocation(
                 source_item,
