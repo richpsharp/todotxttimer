@@ -32,6 +32,7 @@ from todo_core import (
 
 APP_TITLE = "TodoTimerTXT"
 DEFAULT_IDLE_TIMEOUT_MINUTES = 10
+DEFAULT_CHECK_IN_INTERVAL_MINUTES = 0
 ACTIVE_WITHOUT_TIMER_SECONDS = 60
 REPORT_MODEL = "gpt-5-mini"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
@@ -550,6 +551,73 @@ class ActiveWithoutTimerDialog(tk.Toplevel):
             result: Dialog action identifier. Expected values are
                 ``"start_timer"`` and ``"quit"``.
         """
+        self.result = result
+        self.destroy()
+
+
+class RunningTaskCheckInDialog(tk.Toplevel):
+    def __init__(
+        self,
+        master: tk.Misc,
+        item: TodoItem,
+        elapsed_seconds: int,
+        reallocate_shortcut: str,
+    ):
+        super().__init__(master)
+        self.title("Task check-in")
+        self.resizable(False, False)
+        self.transient(master)
+        self.result = "keep_timing"
+
+        body = ttk.Frame(self, padding=14)
+        body.grid(sticky="nsew")
+        body.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            body,
+            text="Did you mean to keep timing this task?",
+            wraplength=560,
+        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ttk.Label(
+            body,
+            text=f"Task: {item.description}",
+            wraplength=560,
+        ).grid(row=1, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(
+            body,
+            text=f"Current timer: {format_duration(elapsed_seconds)}",
+        ).grid(row=2, column=0, sticky="w", pady=(0, 10))
+        ttk.Label(
+            body,
+            text=(
+                "If not, close this check-in, select the task that should "
+                f"receive the time, then press {reallocate_shortcut} to "
+                "reallocate."
+            ),
+            wraplength=560,
+        ).grid(row=3, column=0, sticky="w", pady=(0, 12))
+
+        button_row = ttk.Frame(body)
+        button_row.grid(row=4, column=0, sticky="e")
+        ttk.Button(
+            button_row,
+            text="Keep Timing",
+            command=lambda: self._finish("keep_timing"),
+        ).pack(side="right")
+        ttk.Button(
+            button_row,
+            text="Select Task",
+            command=lambda: self._finish("select_task"),
+        ).pack(side="right", padx=(0, 8))
+
+        self.protocol("WM_DELETE_WINDOW", lambda: self._finish("keep_timing"))
+        self.bind("<Escape>", lambda event: self._finish("keep_timing"))
+        self.update_idletasks()
+        center_dialog_on_master(self, master)
+        self.minsize(self.winfo_width(), self.winfo_height())
+        self.grab_set()
+
+    def _finish(self, result: str) -> None:
         self.result = result
         self.destroy()
 
@@ -1497,9 +1565,15 @@ class TodoTimerApp:
             self.config.idle_timeout_minutes
         )
         self.config.idle_timeout_minutes = self.idle_timeout_minutes
+        self.check_in_interval_minutes = self._normalized_check_in_interval(
+            self.config.check_in_interval_minutes
+        )
+        self.config.check_in_interval_minutes = self.check_in_interval_minutes
         self.last_app_activity_at = datetime.now()
         self.idle_dialog_open = False
+        self.check_in_dialog_open = False
         self.update_check_running = False
+        self.check_in_prompt_buckets: dict[str, int] = {}
         self.active_without_timer_started_at: datetime | None = None
         self.active_without_timer_prompt_open = False
         self.active_without_timer_prompt_shown = False
@@ -1692,6 +1766,10 @@ class TodoTimerApp:
         view_menu.add_command(
             label="Idle timeout...",
             command=self.configure_idle_timeout,
+        )
+        view_menu.add_command(
+            label="Check-in interval...",
+            command=self.configure_check_in_interval,
         )
         menu.add_cascade(label="View", menu=view_menu)
 
@@ -1963,6 +2041,7 @@ class TodoTimerApp:
         self.config.column_sort_direction = self.column_sort_direction
         self.config.show_completed = self.show_completed_var.get()
         self.config.idle_timeout_minutes = self.idle_timeout_minutes
+        self.config.check_in_interval_minutes = self.check_in_interval_minutes
 
     def save_current_config(self) -> None:
         self.sync_config_from_state()
@@ -3005,6 +3084,7 @@ class TodoTimerApp:
             now = datetime.now()
             if item.timer_started_at is None:
                 stopped = self.stop_other_task_timers(item.id, now)
+                self.check_in_prompt_buckets.pop(item.id, None)
                 self.store.start_timer(item.id, now=now)
                 self.start_worked_today_segment(item, now)
                 self.store.save()
@@ -3132,6 +3212,8 @@ class TodoTimerApp:
                 int(dialog.result["reallocated_seconds"]),
                 now=datetime.now(),
             )
+            self.check_in_prompt_buckets.pop(source_item.id, None)
+            self.check_in_prompt_buckets.pop(destination_item.id, None)
             self.store.save()
             self.save_current_config()
             self.refresh_tree(select_item_id=destination_item.id)
@@ -3313,6 +3395,32 @@ class TodoTimerApp:
         self.status_var.set(
             f"Idle timeout set to {self.idle_timeout_minutes} minute(s)."
         )
+
+    def configure_check_in_interval(self) -> None:
+        minutes = simpledialog.askinteger(
+            "Check-in interval",
+            (
+                "Check in after how many minutes on the same task?\n\n"
+                "Use 0 to disable check-ins."
+            ),
+            parent=self.root,
+            initialvalue=self.check_in_interval_minutes,
+            minvalue=0,
+        )
+        if minutes is None:
+            return
+        self.check_in_interval_minutes = self._normalized_check_in_interval(
+            minutes
+        )
+        self.check_in_prompt_buckets = {}
+        self.save_current_config()
+        if self.check_in_interval_minutes:
+            self.status_var.set(
+                "Check-in interval set to "
+                f"{self.check_in_interval_minutes} minute(s)."
+            )
+        else:
+            self.status_var.set("Task check-ins disabled.")
 
     def on_project_filter_changed(self) -> None:
         self.config.project_filter = self.project_filter_var.get().strip()
@@ -3642,6 +3750,71 @@ class TodoTimerApp:
 
         self.trigger_idle_timeout(idle_seconds)
 
+    def _check_running_task_check_in(self) -> None:
+        if (
+            self.check_in_dialog_open
+            or self.idle_dialog_open
+            or self.check_in_interval_minutes <= 0
+        ):
+            return
+
+        running = [
+            item
+            for item in self.store.running_items()
+            if not item.completed and item.timer_started_at is not None
+        ]
+        active_ids = {item.id for item in running}
+        self.check_in_prompt_buckets = {
+            item_id: bucket
+            for item_id, bucket in self.check_in_prompt_buckets.items()
+            if item_id in active_ids
+        }
+        if len(running) != 1:
+            return
+
+        item = running[0]
+        if item.timer_started_at is None:
+            return
+        now = datetime.now()
+        elapsed_seconds = max(
+            0,
+            int((now - item.timer_started_at).total_seconds()),
+        )
+        interval_seconds = self.check_in_interval_minutes * 60
+        bucket = elapsed_seconds // interval_seconds
+        if bucket <= 0 or self.check_in_prompt_buckets.get(item.id, 0) >= bucket:
+            return
+
+        self.check_in_prompt_buckets[item.id] = bucket
+        self._show_running_task_check_in(item, elapsed_seconds)
+
+    def _show_running_task_check_in(
+        self,
+        item: TodoItem,
+        elapsed_seconds: int,
+    ) -> None:
+        self.check_in_dialog_open = True
+        try:
+            dialog = RunningTaskCheckInDialog(
+                self.root,
+                item,
+                elapsed_seconds,
+                shortcut_label("reallocate_time"),
+            )
+            self.root.wait_window(dialog)
+            if dialog.result == "select_task":
+                self.root.deiconify()
+                self.root.lift()
+                self.tree.focus_set()
+                self.status_var.set(
+                    "Select the task to receive time, then press "
+                    f"{shortcut_label('reallocate_time')}."
+                )
+            else:
+                self.status_var.set("Continuing timer.")
+        finally:
+            self.check_in_dialog_open = False
+
     def _check_active_without_timer(self) -> None:
         """Shows a reminder after sustained active use with no running timer.
 
@@ -3807,6 +3980,7 @@ class TodoTimerApp:
         if self.roll_over_worked_today_if_date_changed():
             self.save_current_config()
         self._check_idle_timer()
+        self._check_running_task_check_in()
         self._check_active_without_timer()
         if self.store.running_items():
             selected = (
@@ -3855,6 +4029,14 @@ class TodoTimerApp:
         except (TypeError, ValueError):
             return DEFAULT_IDLE_TIMEOUT_MINUTES
         return max(1, minutes)
+
+    @staticmethod
+    def _normalized_check_in_interval(value: object) -> int:
+        try:
+            minutes = int(value)
+        except (TypeError, ValueError):
+            return DEFAULT_CHECK_IN_INTERVAL_MINUTES
+        return max(0, minutes)
 
     def on_close(self) -> None:
         now = datetime.now()
