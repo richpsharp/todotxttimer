@@ -128,12 +128,12 @@ SHORTCUTS = {
         linux_label="Ctrl+Enter",
     ),
     "archive_completed": ShortcutSpec(
-        windows=("<Control-Shift-a>", "<Control-Shift-A>"),
-        mac=("<Command-Shift-a>", "<Command-Shift-A>"),
-        linux=("<Control-Shift-a>", "<Control-Shift-A>"),
-        windows_label="Ctrl+Shift+A",
-        mac_label="Cmd+Shift+A",
-        linux_label="Ctrl+Shift+A",
+        windows=(),
+        mac=(),
+        linux=(),
+        windows_label="",
+        mac_label="",
+        linux_label="",
     ),
     "edit_task": ShortcutSpec(
         windows=("<F2>",),
@@ -145,10 +145,10 @@ SHORTCUTS = {
     ),
     "append_note": ShortcutSpec(
         windows=("<Control-Alt-a>", "<Control-Alt-A>"),
-        mac=("<Command-Shift-n>", "<Command-Shift-N>"),
+        mac=("<Command-Shift-a>", "<Command-Shift-A>"),
         linux=("<Control-Alt-a>", "<Control-Alt-A>"),
         windows_label="Ctrl+Alt+A",
-        mac_label="Cmd+Shift+N",
+        mac_label="Cmd+Shift+A",
         linux_label="Ctrl+Alt+A",
     ),
     "toggle_complete": ShortcutSpec(
@@ -185,26 +185,26 @@ SHORTCUTS = {
     ),
     "increase_priority": ShortcutSpec(
         windows=("<Alt-Up>",),
-        mac=("<Command-Option-Up>",),
+        mac=("<Command-Up>",),
         linux=("<Alt-Up>",),
         windows_label="Alt+Up",
-        mac_label="Cmd+Option+Up",
+        mac_label="Cmd+Up",
         linux_label="Alt+Up",
     ),
     "decrease_priority": ShortcutSpec(
         windows=("<Alt-Down>",),
-        mac=("<Command-Option-Down>",),
+        mac=("<Command-Down>",),
         linux=("<Alt-Down>",),
         windows_label="Alt+Down",
-        mac_label="Cmd+Option+Down",
+        mac_label="Cmd+Down",
         linux_label="Alt+Down",
     ),
     "clear_priority": ShortcutSpec(
         windows=("<Alt-Left>", "<Alt-Right>"),
-        mac=("<Command-Option-Left>", "<Command-Option-Right>"),
+        mac=("<Command-Left>", "<Command-Right>"),
         linux=("<Alt-Left>", "<Alt-Right>"),
         windows_label="Alt+Left / Alt+Right",
-        mac_label="Cmd+Option+Left / Cmd+Option+Right",
+        mac_label="Cmd+Left / Cmd+Right",
         linux_label="Alt+Left / Alt+Right",
     ),
     "open_first_link": ShortcutSpec(
@@ -2128,7 +2128,6 @@ class TodoTimerApp:
                 f"  {shortcut_label('adjust_time')} adjust tracked time\n"
                 f"  {shortcut_label('append_note')} append note\n"
                 f"  {shortcut_label('open_first_link')} open first link\n"
-                f"  {shortcut_label('archive_completed')} archive completed tasks\n"
                 "  Tools > Generate report creates an OpenAI summary from archive.txt\n"
             ),
             parent=self.root,

@@ -57,8 +57,9 @@ Or, for a windowed version without a console:
 
 ## Archiving
 
-Use the File menu to open or create an `archive.txt` file. Press `Ctrl+Shift+A`
-to move all completed tasks from the current `todo.txt` into that archive file.
+Use the File menu to open or create an `archive.txt` file, then choose
+File > Archive completed tasks to move completed tasks from the current
+`todo.txt` into that archive file.
 
 ## Reports
 
