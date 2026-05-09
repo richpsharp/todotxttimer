@@ -183,6 +183,14 @@ SHORTCUTS = {
         mac_label="Cmd+Option+T",
         linux_label="Ctrl+Alt+T",
     ),
+    "reallocate_time": ShortcutSpec(
+        windows=("<Control-Alt-r>", "<Control-Alt-R>"),
+        mac=("<Command-Shift-r>", "<Command-Shift-R>"),
+        linux=("<Control-Alt-r>", "<Control-Alt-R>"),
+        windows_label="Ctrl+Alt+R",
+        mac_label="Cmd+Shift+R",
+        linux_label="Ctrl+Alt+R",
+    ),
     "increase_priority": ShortcutSpec(
         windows=("<Alt-Up>",),
         mac=("<Command-Option-Up>",),
@@ -1247,6 +1255,204 @@ class AdjustTimeDialog(tk.Toplevel):
         self.destroy()
 
 
+class ReallocateTimeDialog(tk.Toplevel):
+    QUICK_MINUTES = (1, 5, 30)
+
+    def __init__(
+        self,
+        master: tk.Misc,
+        source_item: TodoItem,
+        destination_items: list[TodoItem],
+        active_seconds: int,
+    ):
+        super().__init__(master)
+        self.title("Reallocate active timer time")
+        self.resizable(True, True)
+        self.transient(master)
+        self.result: dict[str, object] | None = None
+        self.destination_items = destination_items
+        self.destination_labels: dict[str, TodoItem] = {}
+        self.active_seconds = max(0, active_seconds)
+        self.amount_var = tk.StringVar(value="")
+        self.destination_var = tk.StringVar()
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        body = ttk.Frame(self, padding=12)
+        body.grid(sticky="nsew")
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(3, weight=1)
+
+        ttk.Label(body, text="Move time from").grid(
+            row=0, column=0, sticky="nw", padx=(0, 8), pady=(0, 8)
+        )
+        ttk.Label(
+            body,
+            text=serialize_todo_line(source_item),
+            wraplength=680,
+        ).grid(row=0, column=1, sticky="ew", pady=(0, 8))
+
+        ttk.Label(body, text="Active session").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        ttk.Label(
+            body,
+            text=format_duration(self.active_seconds),
+        ).grid(row=1, column=1, sticky="w", pady=(0, 8))
+
+        ttk.Label(body, text="Existing task").grid(
+            row=2, column=0, sticky="nw", padx=(0, 8), pady=(0, 8)
+        )
+        labels: list[str] = []
+        for index, item in enumerate(destination_items, start=1):
+            label = f"{index}. {serialize_todo_line(item)}"
+            labels.append(label)
+            self.destination_labels[label] = item
+        self.destination_combo = ttk.Combobox(
+            body,
+            textvariable=self.destination_var,
+            values=labels,
+            state="readonly" if labels else "disabled",
+        )
+        self.destination_combo.grid(row=2, column=1, sticky="ew", pady=(0, 8))
+        if labels:
+            self.destination_var.set(labels[0])
+
+        ttk.Label(body, text="Or new task").grid(
+            row=3, column=0, sticky="nw", padx=(0, 8), pady=(0, 8)
+        )
+        self.new_task_text = tk.Text(body, height=3, width=80, wrap="word")
+        self.new_task_text.grid(row=3, column=1, sticky="nsew", pady=(0, 8))
+
+        ttk.Label(body, text="Reallocate").grid(
+            row=4, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
+        )
+        amount_row = ttk.Frame(body)
+        amount_row.grid(row=4, column=1, sticky="ew", pady=(0, 8))
+        ttk.Entry(
+            amount_row,
+            textvariable=self.amount_var,
+            width=10,
+        ).pack(side="left")
+        ttk.Label(amount_row, text="minutes").pack(side="left", padx=(8, 0))
+
+        quick_frame = ttk.Frame(body)
+        quick_frame.grid(row=5, column=1, sticky="w", pady=(0, 8))
+        ttk.Button(
+            quick_frame,
+            text="All",
+            command=self.set_all_time,
+        ).pack(side="left", padx=(0, 6))
+        for minutes in self.QUICK_MINUTES:
+            ttk.Button(
+                quick_frame,
+                text=f"+{minutes}",
+                width=6,
+                command=lambda minutes=minutes: self.add_minutes(minutes),
+            ).pack(side="left", padx=(0, 6))
+
+        ttk.Label(
+            body,
+            text=(
+                "The remaining active time stays on the current task. "
+                "The destination timer starts as if it has already been "
+                "running for the reallocated time."
+            ),
+            wraplength=680,
+        ).grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+
+        button_row = ttk.Frame(body)
+        button_row.grid(row=7, column=0, columnspan=2, sticky="e", pady=(4, 0))
+        ttk.Button(button_row, text="Cancel", command=self.destroy).pack(
+            side="right"
+        )
+        ttk.Button(button_row, text="Reallocate", command=self._on_save).pack(
+            side="right", padx=(0, 8)
+        )
+
+        self.bind("<Escape>", lambda event: self.destroy())
+        for sequence in shortcut_sequences("submit_task"):
+            self.bind(sequence, lambda event: self._on_save() or "break")
+        self.update_idletasks()
+        center_dialog_on_master(self, master)
+        self.minsize(max(720, self.winfo_width()), self.winfo_height())
+        self.grab_set()
+        if labels:
+            self.destination_combo.focus_set()
+        else:
+            self.new_task_text.focus_set()
+
+    def current_amount_seconds(self) -> int:
+        value = self.amount_var.get().strip()
+        if not value:
+            return 0
+        if value.casefold() == "all":
+            return self.active_seconds
+        minutes = int(value)
+        return max(0, minutes * 60)
+
+    def set_amount_seconds(self, seconds: int) -> None:
+        seconds = min(max(0, seconds), self.active_seconds)
+        if seconds == self.active_seconds:
+            self.amount_var.set("ALL")
+            return
+        minutes = seconds // 60
+        self.amount_var.set(str(minutes))
+
+    def set_all_time(self) -> None:
+        self.amount_var.set("ALL")
+
+    def add_minutes(self, minutes: int) -> None:
+        try:
+            current = self.current_amount_seconds()
+        except ValueError:
+            current = 0
+        self.set_amount_seconds(current + minutes * 60)
+
+    def _on_save(self) -> None:
+        try:
+            reallocated_seconds = min(
+                self.current_amount_seconds(),
+                self.active_seconds,
+            )
+        except ValueError:
+            messagebox.showerror(
+                APP_TITLE,
+                "Reallocated time must be whole minutes or ALL.",
+                parent=self,
+            )
+            return
+        if reallocated_seconds <= 0:
+            messagebox.showerror(
+                APP_TITLE,
+                "Reallocated time must be greater than zero.",
+                parent=self,
+            )
+            return
+
+        new_task_text = " ".join(self.new_task_text.get("1.0", "end").split())
+        destination_item = None
+        if not new_task_text:
+            destination_item = self.destination_labels.get(
+                self.destination_var.get()
+            )
+            if destination_item is None:
+                messagebox.showerror(
+                    APP_TITLE,
+                    "Choose an existing task or enter a new task.",
+                    parent=self,
+                )
+                return
+
+        self.result = {
+            "destination_item": destination_item,
+            "new_task_text": new_task_text,
+            "reallocated_seconds": reallocated_seconds,
+        }
+        self.destroy()
+
+
 class TodoTimerApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
@@ -1421,6 +1627,11 @@ class TodoTimerApp:
             accelerator=shortcut_label("adjust_time"),
             command=self.adjust_time_selected,
         )
+        task_menu.add_command(
+            label="Reallocate active time...",
+            accelerator=shortcut_label("reallocate_time"),
+            command=self.reallocate_time_selected,
+        )
         task_menu.add_separator()
         task_menu.add_command(
             label="Increase priority",
@@ -1544,6 +1755,7 @@ class TodoTimerApp:
             text=(
                 f"[{shortcut_label('toggle_timer')}] start/stop timer | "
                 f"[{shortcut_label('adjust_time')}] adjust time | "
+                f"[{shortcut_label('reallocate_time')}] reallocate time | "
                 f"[{shortcut_label('edit_task')}] edit entry | "
                 f"[{shortcut_label('append_note')}] append note | "
                 f"[{shortcut_label('open_first_link')}] open first link | "
@@ -1691,6 +1903,7 @@ class TodoTimerApp:
         self.bind_tree_shortcut("adjust_time", self.adjust_time_selected)
         self.bind_tree_shortcut("toggle_timer", self.toggle_timer_selected)
         self.bind_app_shortcut("adjust_time", self.adjust_time_selected)
+        self.bind_app_shortcut("reallocate_time", self.reallocate_time_selected)
         self.bind_app_shortcut("append_note", self.append_note_selected)
         self.bind_app_shortcut("open_first_link", self.open_first_link)
         self.bind_app_shortcut(
@@ -2126,6 +2339,7 @@ class TodoTimerApp:
                 f"{shortcut_label('decrease_priority')} change priority\n"
                 f"  {shortcut_label('toggle_timer')} start/stop timer\n"
                 f"  {shortcut_label('adjust_time')} adjust tracked time\n"
+                f"  {shortcut_label('reallocate_time')} reallocate active time\n"
                 f"  {shortcut_label('append_note')} append note\n"
                 f"  {shortcut_label('open_first_link')} open first link\n"
                 f"  {shortcut_label('archive_completed')} archive completed tasks\n"
@@ -2835,6 +3049,132 @@ class TodoTimerApp:
                 f"Could not adjust tracked time:\n{exc}",
                 parent=self.root,
             )
+
+    def reallocate_time_selected(self) -> None:
+        try:
+            self.ensure_file_loaded()
+            running = [
+                item
+                for item in self.store.running_items()
+                if not item.completed and item.timer_started_at is not None
+            ]
+            if len(running) != 1:
+                messagebox.showinfo(
+                    APP_TITLE,
+                    "Start exactly one task timer before reallocating time.",
+                    parent=self.root,
+                )
+                return
+
+            source_item = running[0]
+            now = datetime.now()
+            active_seconds = max(
+                0,
+                int((now - source_item.timer_started_at).total_seconds()),
+            )
+            if active_seconds <= 0:
+                messagebox.showinfo(
+                    APP_TITLE,
+                    "The active timer has no time to reallocate yet.",
+                    parent=self.root,
+                )
+                return
+
+            destination_items = [
+                item
+                for item in self.store.items
+                if item.id != source_item.id and not item.completed
+            ]
+            dialog = ReallocateTimeDialog(
+                self.root,
+                source_item,
+                destination_items,
+                active_seconds,
+            )
+            self.root.wait_window(dialog)
+            if not dialog.result:
+                return
+
+            destination_item = dialog.result["destination_item"]
+            new_task_text = str(dialog.result["new_task_text"])
+            if destination_item is None:
+                destination_item = parse_todo_line(
+                    new_task_text,
+                    line_index=len(self.store.items),
+                )
+                if destination_item.completed:
+                    raise RuntimeError("Destination task cannot be completed.")
+                if not destination_item.creation_date:
+                    destination_item.creation_date = self.today_string()
+                self.store.items.append(destination_item)
+
+            self.apply_timer_reallocation(
+                source_item,
+                destination_item,
+                int(dialog.result["reallocated_seconds"]),
+                now=datetime.now(),
+            )
+            self.store.save()
+            self.save_current_config()
+            self.refresh_tree(select_item_id=destination_item.id)
+            self.status_var.set(
+                "Reallocated "
+                f"{format_duration(int(dialog.result['reallocated_seconds']))} "
+                f"to {destination_item.description}."
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                APP_TITLE,
+                f"Could not reallocate active time:\n{exc}",
+                parent=self.root,
+            )
+
+    def apply_timer_reallocation(
+        self,
+        source_item: TodoItem,
+        destination_item: TodoItem,
+        reallocated_seconds: int,
+        now: datetime,
+    ) -> int:
+        if source_item.timer_started_at is None:
+            raise RuntimeError("Source task timer is not running.")
+        if source_item.id == destination_item.id:
+            raise RuntimeError("Choose a different destination task.")
+        if destination_item.completed:
+            raise RuntimeError("Destination task cannot be completed.")
+
+        active_seconds = max(
+            0,
+            int((now - source_item.timer_started_at).total_seconds()),
+        )
+        reallocated_seconds = min(
+            max(0, int(reallocated_seconds)),
+            active_seconds,
+        )
+        if reallocated_seconds <= 0:
+            raise RuntimeError("Reallocated time must be greater than zero.")
+
+        source_remainder_seconds = active_seconds - reallocated_seconds
+        source_key = self.worked_today_task_signature(source_item)
+        destination_key = self.worked_today_task_signature(destination_item)
+
+        self.config.worked_today_active_started_at.pop(source_key, None)
+        if source_remainder_seconds:
+            self.config.worked_today_seconds[source_key] = (
+                self.config.worked_today_seconds.get(source_key, 0)
+                + source_remainder_seconds
+            )
+
+        source_item.time_spent_seconds += source_remainder_seconds
+        source_item.last_worked_at = now
+        source_item.timer_started_at = None
+
+        destination_started_at = now - timedelta(seconds=reallocated_seconds)
+        destination_item.timer_started_at = destination_started_at
+        self.config.worked_today_active_started_at[destination_key] = (
+            format_timestamp(destination_started_at)
+        )
+        return reallocated_seconds
 
     def increase_priority(self) -> None:
         item = self.selected_item()
