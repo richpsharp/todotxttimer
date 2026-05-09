@@ -567,7 +567,6 @@ class RunningTaskCheckInDialog(tk.Toplevel):
         self.title("Task check-in")
         self.resizable(False, False)
         self.transient(master)
-        self.result = "keep_timing"
 
         body = ttk.Frame(self, padding=14)
         body.grid(sticky="nsew")
@@ -601,25 +600,16 @@ class RunningTaskCheckInDialog(tk.Toplevel):
         button_row.grid(row=4, column=0, sticky="e")
         ttk.Button(
             button_row,
-            text="Keep Timing",
-            command=lambda: self._finish("keep_timing"),
+            text="Thanks",
+            command=self.destroy,
         ).pack(side="right")
-        ttk.Button(
-            button_row,
-            text="Select Task",
-            command=lambda: self._finish("select_task"),
-        ).pack(side="right", padx=(0, 8))
 
-        self.protocol("WM_DELETE_WINDOW", lambda: self._finish("keep_timing"))
-        self.bind("<Escape>", lambda event: self._finish("keep_timing"))
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.bind("<Escape>", lambda event: self.destroy())
         self.update_idletasks()
         center_dialog_on_master(self, master)
         self.minsize(self.winfo_width(), self.winfo_height())
         self.grab_set()
-
-    def _finish(self, result: str) -> None:
-        self.result = result
-        self.destroy()
 
 
 class RunningTimerRecoveryDialog(tk.Toplevel):
@@ -3802,16 +3792,7 @@ class TodoTimerApp:
                 shortcut_label("reallocate_time"),
             )
             self.root.wait_window(dialog)
-            if dialog.result == "select_task":
-                self.root.deiconify()
-                self.root.lift()
-                self.tree.focus_set()
-                self.status_var.set(
-                    "Select the task to receive time, then press "
-                    f"{shortcut_label('reallocate_time')}."
-                )
-            else:
-                self.status_var.set("Continuing timer.")
+            self.status_var.set("Continuing timer.")
         finally:
             self.check_in_dialog_open = False
 
