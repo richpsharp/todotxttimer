@@ -127,14 +127,6 @@ SHORTCUTS = {
         mac_label="Cmd+Enter",
         linux_label="Ctrl+Enter",
     ),
-    "archive_completed": ShortcutSpec(
-        windows=(),
-        mac=(),
-        linux=(),
-        windows_label="",
-        mac_label="",
-        linux_label="",
-    ),
     "edit_task": ShortcutSpec(
         windows=("<F2>",),
         mac=("<Command-e>", "<F2>"),
@@ -1382,7 +1374,6 @@ class TodoTimerApp:
         )
         file_menu.add_command(
             label="Archive completed tasks",
-            accelerator=shortcut_label("archive_completed"),
             command=self.archive_completed_tasks,
         )
         file_menu.add_separator()
@@ -1676,7 +1667,6 @@ class TodoTimerApp:
     def _bind_shortcuts(self) -> None:
         self.bind_app_shortcut("open_file", self.choose_file)
         self.bind_app_shortcut("save_file", self.save_file)
-        self.bind_app_shortcut("archive_completed", self.archive_completed_tasks)
         self.bind_app_shortcut("reload_file", self.reload_file)
         self.bind_app_shortcut(
             "new_task",
