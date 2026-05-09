@@ -1264,6 +1264,7 @@ class ReallocateTimeDialog(tk.Toplevel):
         source_item: TodoItem,
         destination_items: list[TodoItem],
         active_seconds: int,
+        selected_destination_id: str | None = None,
     ):
         super().__init__(master)
         self.title("Reallocate active timer time")
@@ -1305,10 +1306,13 @@ class ReallocateTimeDialog(tk.Toplevel):
             row=2, column=0, sticky="nw", padx=(0, 8), pady=(0, 8)
         )
         labels: list[str] = []
+        selected_label = ""
         for index, item in enumerate(destination_items, start=1):
             label = f"{index}. {serialize_todo_line(item)}"
             labels.append(label)
             self.destination_labels[label] = item
+            if item.id == selected_destination_id:
+                selected_label = label
         self.destination_combo = ttk.Combobox(
             body,
             textvariable=self.destination_var,
@@ -1317,7 +1321,7 @@ class ReallocateTimeDialog(tk.Toplevel):
         )
         self.destination_combo.grid(row=2, column=1, sticky="ew", pady=(0, 8))
         if labels:
-            self.destination_var.set(labels[0])
+            self.destination_var.set(selected_label or labels[0])
 
         ttk.Label(body, text="Or new task").grid(
             row=3, column=0, sticky="nw", padx=(0, 8), pady=(0, 8)
@@ -3100,11 +3104,22 @@ class TodoTimerApp:
                 for item in self.store.items
                 if item.id != source_item.id and not item.completed
             ]
+            selected_destination = self.selected_item()
+            selected_destination_id = (
+                selected_destination.id
+                if (
+                    selected_destination is not None
+                    and selected_destination.id != source_item.id
+                    and not selected_destination.completed
+                )
+                else None
+            )
             dialog = ReallocateTimeDialog(
                 self.root,
                 source_item,
                 destination_items,
                 active_seconds,
+                selected_destination_id=selected_destination_id,
             )
             self.root.wait_window(dialog)
             if not dialog.result:
