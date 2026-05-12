@@ -2140,6 +2140,25 @@ class TodoTimerApp:
         else:
             self.config.worked_today_seconds.pop(key, None)
 
+    def set_worked_today_total(
+        self,
+        item: TodoItem,
+        total_seconds: int,
+        now: datetime,
+    ) -> None:
+        self.roll_over_worked_today_if_date_changed(now)
+        key = self.worked_today_task_signature(item)
+        total = max(0, int(total_seconds))
+        if total:
+            self.config.worked_today_seconds[key] = total
+        else:
+            self.config.worked_today_seconds.pop(key, None)
+
+        if item.timer_started_at is not None:
+            self.config.worked_today_active_started_at[key] = format_timestamp(now)
+        else:
+            self.config.worked_today_active_started_at.pop(key, None)
+
     def stop_other_task_timers(
         self,
         except_item_id: str,
@@ -3097,16 +3116,22 @@ class TodoTimerApp:
         delta_seconds = dialog.result_minutes * 60
         try:
             self.ensure_file_loaded()
-            current_total = item.total_elapsed_seconds()
+            now = datetime.now()
+            current_total = item.total_elapsed_seconds(now)
+            current_worked_today = self.current_worked_today_seconds(item, now)
             new_total = max(0, current_total + delta_seconds)
+            actual_delta = new_total - current_total
+            new_worked_today = max(0, current_worked_today + actual_delta)
             if item.timer_started_at is None:
                 item.time_spent_seconds = new_total
             else:
                 item.time_spent_seconds = 0
-                item.timer_started_at = datetime.now() - timedelta(
+                item.timer_started_at = now - timedelta(
                     seconds=new_total
                 )
+            self.set_worked_today_total(item, new_worked_today, now)
             self.store.save()
+            self.save_current_config()
             self.refresh_tree(select_item_id=item.id)
             self.status_var.set(
                 f"Adjusted tracked time to {format_duration(new_total)}."
