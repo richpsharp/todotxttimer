@@ -1664,6 +1664,24 @@ class TodoTimerApp:
             except Exception as exc:
                 self.status_var.set(f"Could not open saved file: {exc}")
         self.update_connection_status()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.after(
+            250,
+            lambda: self.finish_startup_after_window_is_visible(
+                worked_today_date_changed
+            ),
+        )
+
+    def finish_startup_after_window_is_visible(
+        self,
+        worked_today_date_changed: bool,
+    ) -> None:
+        """Runs launch work that may show modal dialogs after the window maps.
+
+        Args:
+            worked_today_date_changed: Whether the worked-today date changed
+                during initial config loading and should be persisted.
+        """
         self.recover_left_running_timer()
         had_active_today_segments = bool(
             self.config.worked_today_active_started_at
@@ -1677,7 +1695,6 @@ class TodoTimerApp:
         if running_items or had_active_today_segments or worked_today_date_changed:
             self.save_current_config()
 
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._tick()
         self.root.after(1000, lambda: self.check_for_updates(manual=False))
 
