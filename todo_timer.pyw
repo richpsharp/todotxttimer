@@ -3786,19 +3786,34 @@ class TodoTimerApp:
         )
 
     def _update_idle_status(self) -> None:
-        today_total = format_duration(self.total_worked_today_seconds())
+        now = datetime.now()
         running_items = self.store.running_items()
+        active_items = [
+            item
+            for item in running_items
+            if not item.completed and item.timer_started_at is not None
+        ]
+        current_session = "--"
+        if active_items:
+            current_session = format_duration(
+                int((now - active_items[0].timer_started_at).total_seconds())
+            )
+        today_total = format_duration(self.total_worked_today_seconds(now))
         check_in_status = self._check_in_status_text(running_items)
+        status_prefix = (
+            f"Current session: {current_session} | "
+            f"Time worked today: {today_total} | "
+        )
         if not running_items:
             self.idle_status_var.set(
-                f"Time worked today: {today_total} | {check_in_status}"
+                f"{status_prefix}{check_in_status}"
             )
             return
         idle_seconds = self._current_idle_seconds()
         threshold_seconds = self.idle_timeout_minutes * 60
         remaining_seconds = max(0, threshold_seconds - idle_seconds)
         self.idle_status_var.set(
-            f"Time worked today: {today_total} | "
+            status_prefix +
             "Idle: "
             f"{format_duration(idle_seconds)} | "
             f"Pauses in: {format_duration(remaining_seconds)} | "
