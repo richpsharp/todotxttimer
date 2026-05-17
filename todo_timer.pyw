@@ -374,6 +374,12 @@ class UpdateCheckResult:
 
 
 def center_dialog_on_master(dialog: tk.Toplevel, master: tk.Misc) -> None:
+    """Positions a dialog in the visible screen area around its parent.
+
+    Args:
+        dialog: Toplevel window to position.
+        master: Parent widget used as the centering reference.
+    """
     dialog.update_idletasks()
     master.update_idletasks()
 
@@ -400,6 +406,76 @@ def center_dialog_on_master(dialog: tk.Toplevel, master: tk.Misc) -> None:
     y = min(max(y, screen_y), max_y)
 
     dialog.geometry(f"+{x}+{y}")
+
+
+def activate_modal_dialog(
+    dialog: tk.Toplevel,
+    master: tk.Misc,
+    *,
+    focus_widget: tk.Widget | None = None,
+    min_width: int | None = None,
+) -> None:
+    """Makes a Toplevel visible, focused, and locally modal.
+
+    Args:
+        dialog: Toplevel window that should become modal.
+        master: Parent widget used for ownership and positioning.
+        focus_widget: Optional child widget that should receive keyboard focus.
+            When omitted, the dialog itself receives focus.
+        min_width: Optional minimum width in pixels. The final minimum width is
+            the larger of this value and the dialog's requested width.
+    """
+    master_window = master.winfo_toplevel()
+    try:
+        master_window.deiconify()
+        master_window.lift()
+        master_window.update_idletasks()
+    except tk.TclError:
+        pass
+
+    dialog.update_idletasks()
+    center_dialog_on_master(dialog, master_window)
+    dialog.minsize(
+        max(min_width or 0, dialog.winfo_width()),
+        dialog.winfo_height(),
+    )
+
+    try:
+        dialog.attributes("-topmost", True)
+    except tk.TclError:
+        pass
+
+    dialog.deiconify()
+    dialog.lift()
+    try:
+        dialog.wait_visibility()
+    except tk.TclError:
+        pass
+
+    (focus_widget or dialog).focus_force()
+    dialog.grab_set()
+
+    def clear_topmost() -> None:
+        try:
+            if dialog.winfo_exists():
+                dialog.attributes("-topmost", False)
+        except tk.TclError:
+            pass
+
+    dialog.after(250, clear_topmost)
+
+
+def close_modal_dialog(dialog: tk.Toplevel) -> None:
+    """Releases a local Tk grab before destroying a modal dialog.
+
+    Args:
+        dialog: Toplevel window that may currently own the local input grab.
+    """
+    try:
+        dialog.grab_release()
+    except tk.TclError:
+        pass
+    dialog.destroy()
 
 
 class IdleTimerDialog(tk.Toplevel):
@@ -459,10 +535,7 @@ class IdleTimerDialog(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", lambda: self._finish("discard_idle"))
         self.bind("<Escape>", lambda event_: self._finish("discard_idle"))
         self._update_idle_time()
-        self.update_idletasks()
-        center_dialog_on_master(self, master)
-        self.minsize(self.winfo_width(), self.winfo_height())
-        self.grab_set()
+        activate_modal_dialog(self, master)
 
     def _current_idle_seconds(self) -> int:
         return max(
@@ -482,7 +555,7 @@ class IdleTimerDialog(tk.Toplevel):
         self.result = result
         if self._idle_update_id is not None:
             self.after_cancel(self._idle_update_id)
-        self.destroy()
+        close_modal_dialog(self)
 
 
 class ActiveWithoutTimerDialog(tk.Toplevel):
@@ -531,10 +604,7 @@ class ActiveWithoutTimerDialog(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", lambda: self._finish("start_timer"))
         self.bind("<Escape>", lambda event_: self._finish("start_timer"))
-        self.update_idletasks()
-        center_dialog_on_master(self, master)
-        self.minsize(self.winfo_width(), self.winfo_height())
-        self.grab_set()
+        activate_modal_dialog(self, master)
 
     def _finish(self, result: str) -> None:
         """Stores the selected action and closes the modal.
@@ -544,7 +614,7 @@ class ActiveWithoutTimerDialog(tk.Toplevel):
                 ``"start_timer"`` and ``"quit"``.
         """
         self.result = result
-        self.destroy()
+        close_modal_dialog(self)
 
 
 class RunningTaskCheckInDialog(tk.Toplevel):
@@ -593,15 +663,12 @@ class RunningTaskCheckInDialog(tk.Toplevel):
         ttk.Button(
             button_row,
             text="Thanks",
-            command=self.destroy,
+            command=lambda: close_modal_dialog(self),
         ).pack(side="right")
 
-        self.protocol("WM_DELETE_WINDOW", self.destroy)
-        self.bind("<Escape>", lambda event: self.destroy())
-        self.update_idletasks()
-        center_dialog_on_master(self, master)
-        self.minsize(self.winfo_width(), self.winfo_height())
-        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", lambda: close_modal_dialog(self))
+        self.bind("<Escape>", lambda event: close_modal_dialog(self))
+        activate_modal_dialog(self, master)
 
 
 class RunningTimerRecoveryDialog(tk.Toplevel):
@@ -661,14 +728,11 @@ class RunningTimerRecoveryDialog(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", lambda: self._finish("continue"))
         self.bind("<Escape>", lambda event_: self._finish("continue"))
-        self.update_idletasks()
-        center_dialog_on_master(self, master)
-        self.minsize(self.winfo_width(), self.winfo_height())
-        self.grab_set()
+        activate_modal_dialog(self, master)
 
     def _finish(self, result: str) -> None:
         self.result = result
-        self.destroy()
+        close_modal_dialog(self)
 
 
 class ReportDateDialog(tk.Toplevel):
@@ -782,19 +846,19 @@ class ReportDateDialog(tk.Toplevel):
 
         button_row = ttk.Frame(body)
         button_row.grid(row=5, column=0, columnspan=2, sticky="e")
-        ttk.Button(button_row, text="Cancel", command=self.destroy).pack(
-            side="right"
-        )
+        ttk.Button(
+            button_row,
+            text="Cancel",
+            command=lambda: close_modal_dialog(self),
+        ).pack(side="right")
         ttk.Button(button_row, text="Generate", command=self._on_generate).pack(
             side="right", padx=(0, 8)
         )
 
-        self.bind("<Escape>", lambda event: self.destroy())
+        self.bind("<Escape>", lambda event: close_modal_dialog(self))
         self.bind("<Return>", lambda event: self._on_generate())
         self.apply_current_month()
-        self.grab_set()
-        self.update_idletasks()
-        self.minsize(self.winfo_width(), self.winfo_height())
+        activate_modal_dialog(self, master)
 
     def apply_current_month(self) -> None:
         self.set_range(date(self.today.year, self.today.month, 1), self.today)
@@ -869,7 +933,7 @@ class ReportDateDialog(tk.Toplevel):
             )
             return
         self.result = (start_date, end_date)
-        self.destroy()
+        close_modal_dialog(self)
 
 
 class OpenAIKeyDialog(tk.Toplevel):
@@ -893,23 +957,22 @@ class OpenAIKeyDialog(tk.Toplevel):
 
         button_row = ttk.Frame(body)
         button_row.grid(row=2, column=0, sticky="e")
-        ttk.Button(button_row, text="Cancel", command=self.destroy).pack(
-            side="right"
-        )
+        ttk.Button(
+            button_row,
+            text="Cancel",
+            command=lambda: close_modal_dialog(self),
+        ).pack(side="right")
         ttk.Button(button_row, text="Save", command=self._on_save).pack(
             side="right", padx=(0, 8)
         )
 
-        self.bind("<Escape>", lambda event: self.destroy())
+        self.bind("<Escape>", lambda event: close_modal_dialog(self))
         self.bind("<Return>", lambda event: self._on_save())
-        self.grab_set()
-        entry.focus_set()
-        self.update_idletasks()
-        self.minsize(max(520, self.winfo_width()), self.winfo_height())
+        activate_modal_dialog(self, master, focus_widget=entry, min_width=520)
 
     def _on_save(self) -> None:
         self.result = self.key_var.get().strip()
-        self.destroy()
+        close_modal_dialog(self)
 
 
 class ReportResultDialog(tk.Toplevel):
@@ -1074,21 +1137,25 @@ class TaskDialog(tk.Toplevel):
 
         button_row = ttk.Frame(body)
         button_row.grid(row=8, column=0, columnspan=2, sticky="e", pady=(12, 0))
-        ttk.Button(button_row, text="Cancel", command=self.destroy).pack(
-            side="right"
-        )
+        ttk.Button(
+            button_row,
+            text="Cancel",
+            command=lambda: close_modal_dialog(self),
+        ).pack(side="right")
         ttk.Button(button_row, text="Save", command=self._on_save).pack(
             side="right", padx=(0, 8)
         )
 
         self._toggle_completion()
-        self.bind("<Escape>", lambda event: self.destroy())
+        self.bind("<Escape>", lambda event: close_modal_dialog(self))
         for sequence in shortcut_sequences("submit_task"):
             self.bind(sequence, lambda event: self._on_save() or "break")
-        self.description_text.focus_set()
-        self.grab_set()
-        self.update_idletasks()
-        self.minsize(max(700, self.winfo_width()), self.winfo_height())
+        activate_modal_dialog(
+            self,
+            master,
+            focus_widget=self.description_text,
+            min_width=700,
+        )
 
     def _toggle_completion(self) -> None:
         state = "normal" if self.completed_var.get() else "disabled"
@@ -1127,7 +1194,7 @@ class TaskDialog(tk.Toplevel):
             "completed": completed,
             "completion_date": completed_date or None,
         }
-        self.destroy()
+        close_modal_dialog(self)
 
 
 class QuickNoteDialog(tk.Toplevel):
@@ -1166,21 +1233,24 @@ class QuickNoteDialog(tk.Toplevel):
 
         button_row = ttk.Frame(body)
         button_row.grid(row=4, column=0, sticky="e", pady=(4, 0))
-        ttk.Button(button_row, text="Cancel", command=self.destroy).pack(
-            side="right"
-        )
+        ttk.Button(
+            button_row,
+            text="Cancel",
+            command=lambda: close_modal_dialog(self),
+        ).pack(side="right")
         ttk.Button(button_row, text="Save", command=self._on_save).pack(
             side="right", padx=(0, 8)
         )
 
-        self.bind("<Escape>", lambda event: self.destroy())
+        self.bind("<Escape>", lambda event: close_modal_dialog(self))
         for sequence in shortcut_sequences("submit_task"):
             self.bind(sequence, lambda event: self._on_save() or "break")
-        self.note_text.focus_set()
-        self.update_idletasks()
-        center_dialog_on_master(self, master)
-        self.minsize(max(620, self.winfo_width()), self.winfo_height())
-        self.grab_set()
+        activate_modal_dialog(
+            self,
+            master,
+            focus_widget=self.note_text,
+            min_width=620,
+        )
 
     def _on_save(self) -> None:
         note = " ".join(self.note_text.get("1.0", "end").split())
@@ -1188,7 +1258,7 @@ class QuickNoteDialog(tk.Toplevel):
             messagebox.showerror(APP_TITLE, "Note cannot be empty.", parent=self)
             return
         self.result = note
-        self.destroy()
+        close_modal_dialog(self)
 
 
 class AdjustTimeDialog(tk.Toplevel):
@@ -1258,22 +1328,20 @@ class AdjustTimeDialog(tk.Toplevel):
 
         button_row = ttk.Frame(body)
         button_row.grid(row=4, column=0, columnspan=2, sticky="e", pady=(4, 0))
-        ttk.Button(button_row, text="Cancel", command=self.destroy).pack(
-            side="right"
-        )
+        ttk.Button(
+            button_row,
+            text="Cancel",
+            command=lambda: close_modal_dialog(self),
+        ).pack(side="right")
         ttk.Button(button_row, text="Save", command=self._on_save).pack(
             side="right", padx=(0, 8)
         )
 
-        self.bind("<Escape>", lambda event: self.destroy())
+        self.bind("<Escape>", lambda event: close_modal_dialog(self))
         for sequence in shortcut_sequences("submit_task"):
             self.bind(sequence, lambda event: self._on_save() or "break")
-        self.adjustment_entry.focus_set()
         self.adjustment_entry.selection_range(0, "end")
-        self.update_idletasks()
-        center_dialog_on_master(self, master)
-        self.minsize(self.winfo_width(), self.winfo_height())
-        self.grab_set()
+        activate_modal_dialog(self, master, focus_widget=self.adjustment_entry)
 
     def current_adjustment_minutes(self) -> int:
         value = self.adjustment_var.get().strip()
@@ -1302,7 +1370,7 @@ class AdjustTimeDialog(tk.Toplevel):
                 parent=self,
             )
             return
-        self.destroy()
+        close_modal_dialog(self)
 
 
 class ReallocateTimeDialog(tk.Toplevel):
@@ -1430,24 +1498,24 @@ class ReallocateTimeDialog(tk.Toplevel):
 
         button_row = ttk.Frame(body)
         button_row.grid(row=7, column=0, columnspan=2, sticky="e", pady=(4, 0))
-        ttk.Button(button_row, text="Cancel", command=self.destroy).pack(
-            side="right"
-        )
+        ttk.Button(
+            button_row,
+            text="Cancel",
+            command=lambda: close_modal_dialog(self),
+        ).pack(side="right")
         ttk.Button(button_row, text="Reallocate", command=self._on_save).pack(
             side="right", padx=(0, 8)
         )
 
-        self.bind("<Escape>", lambda event: self.destroy())
+        self.bind("<Escape>", lambda event: close_modal_dialog(self))
         for sequence in shortcut_sequences("submit_task"):
             self.bind(sequence, lambda event: self._on_save() or "break")
-        self.update_idletasks()
-        center_dialog_on_master(self, master)
-        self.minsize(max(720, self.winfo_width()), self.winfo_height())
-        self.grab_set()
-        if labels:
-            self.destination_combo.focus_set()
-        else:
-            self.new_task_text.focus_set()
+        activate_modal_dialog(
+            self,
+            master,
+            focus_widget=self.destination_combo if labels else self.new_task_text,
+            min_width=720,
+        )
 
     def add_minutes(self, minutes: int) -> None:
         value = self.amount_var.get().strip()
@@ -1509,7 +1577,7 @@ class ReallocateTimeDialog(tk.Toplevel):
             "new_task_text": new_task_text,
             "reallocated_seconds": reallocated_seconds,
         }
-        self.destroy()
+        close_modal_dialog(self)
 
 
 class TodoTimerApp:
