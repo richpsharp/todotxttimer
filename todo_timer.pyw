@@ -24,7 +24,9 @@ from todo_core import (
     format_duration,
     format_timestamp,
     is_date_string,
+    normalize_priority,
     normalize_sort_text,
+    priority_sort_key,
     parse_timestamp,
     parse_todo_line,
     serialize_todo_line,
@@ -62,7 +64,7 @@ TREE_COLUMN_LABELS = {
 TREE_COLUMN_OPTIONS = {
     "projects": (150, "w", False),
     "done": (20, "center", False),
-    "priority": (20, "center", False),
+    "priority": (64, "center", False),
     "created": (80, "center", False),
     "lastworked": (80, "center", False),
     "spent": (70, "center", False),
@@ -1093,14 +1095,12 @@ class TaskDialog(tk.Toplevel):
         ttk.Label(body, text="Priority").grid(
             row=1, column=0, sticky="w", padx=(0, 8), pady=4
         )
-        self.priority_combo = ttk.Combobox(
+        self.priority_entry = ttk.Entry(
             body,
             textvariable=self.priority_var,
-            values=[""] + [chr(code) for code in range(ord("A"), ord("Z") + 1)],
-            width=8,
-            state="readonly",
+            width=12,
         )
-        self.priority_combo.grid(row=1, column=1, sticky="w", pady=4)
+        self.priority_entry.grid(row=1, column=1, sticky="w", pady=4)
 
         ttk.Label(body, text="Created").grid(
             row=2, column=0, sticky="w", padx=(0, 8), pady=4
@@ -1193,10 +1193,15 @@ class TaskDialog(tk.Toplevel):
             return
         if not completed:
             completed_date = ""
+        try:
+            priority = normalize_priority(self.priority_var.get())
+        except TodoFormatError as exc:
+            messagebox.showerror(APP_TITLE, str(exc), parent=self)
+            return
 
         self.result = {
             "description": description,
-            "priority": self.priority_var.get().strip() or None,
+            "priority": priority,
             "creation_date": created or None,
             "completed": completed,
             "completion_date": completed_date or None,
@@ -3658,6 +3663,13 @@ class TodoTimerApp:
             or self.column_sort_direction not in COLUMN_SORT_DIRECTIONS
         ):
             return items
+
+        if self.column_sort_column == "priority":
+            return sorted(
+                items,
+                key=lambda item: priority_sort_key(item.priority),
+                reverse=self.column_sort_direction == "desc",
+            )
 
         return sorted(
             items,

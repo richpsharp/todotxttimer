@@ -13,7 +13,7 @@ import uuid
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$")
-PRIORITY_RE = re.compile(r"^\(([A-Z])\)$")
+PRIORITY_RE = re.compile(r"^\(([A-Z])\1*\)$")
 URL_RE = re.compile(r"https?://\S+")
 
 DATE_FMT = "%Y-%m-%d"
@@ -76,6 +76,52 @@ def format_duration(total_seconds: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
+def normalize_priority(value: str | None) -> str | None:
+    """Normalizes a todo priority token value.
+
+    Args:
+        value: Priority text without parentheses, such as ``"A"``,
+            ``"AAAA"``, or ``"BB"``. Empty strings and ``None`` mean no
+            priority.
+
+    Returns:
+        Uppercase repeated-letter priority text, or ``None`` when no priority
+        was provided.
+
+    Raises:
+        TodoFormatError: If the priority is not one repeated A-Z letter.
+    """
+    if value is None:
+        return None
+    priority = value.strip().upper()
+    if not priority:
+        return None
+    if not re.fullmatch(r"[A-Z]+", priority) or len(set(priority)) != 1:
+        raise TodoFormatError(
+            f"Invalid priority {priority!r}. "
+            "Expected repeated A-Z letters like A, AA, or BBB."
+        )
+    return priority
+
+
+def priority_sort_key(priority: str | None) -> tuple[str, int]:
+    """Builds the sort key for todo priority ordering.
+
+    Args:
+        priority: Priority text without parentheses, such as ``"A"``,
+            ``"AAAA"``, or ``"BB"``.
+
+    Returns:
+        A tuple of ``(letter_group, negative_length)``. Empty priorities sort
+        after ``Z``. Longer repeated priorities sort first inside the same
+        letter group, so ``AAAA`` comes before ``A``.
+    """
+    normalized = normalize_priority(priority)
+    if normalized is None:
+        return ("Z{", 0)
+    return (normalized[0], -len(normalized))
+
+
 @dataclass(slots=True)
 class TodoItem:
     description: str = ""
@@ -90,12 +136,7 @@ class TodoItem:
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def __post_init__(self) -> None:
-        if self.priority is not None:
-            self.priority = self.priority.upper()
-            if len(self.priority) != 1 or not self.priority.isalpha():
-                raise TodoFormatError(
-                    f"Invalid priority {self.priority!r}. Expected A-Z."
-                )
+        self.priority = normalize_priority(self.priority)
         self.creation_date = parse_date_string(self.creation_date)
         self.completion_date = parse_date_string(self.completion_date)
         self.time_spent_seconds = max(0, int(self.time_spent_seconds))
@@ -328,11 +369,16 @@ class TodoStore:
         if item.priority is None:
             item.priority = "A" if direction < 0 else "Z"
             return item
-        code = ord(item.priority)
         if direction < 0:
-            code = max(ord("A"), code - 1)
+            if item.priority[0] == "A":
+                item.priority += "A"
+                return item
+            code = ord(item.priority[0]) - 1
         else:
-            code = min(ord("Z"), code + 1)
+            if len(item.priority) > 1:
+                item.priority = item.priority[:-1]
+                return item
+            code = min(ord("Z"), ord(item.priority[0]) + 1)
         item.priority = chr(code)
         return item
 
@@ -393,27 +439,27 @@ class TodoStore:
             key = lambda item: (
                 item.completed,
                 item.creation_date or "9999-99-99",
-                item.priority or "Z{",
+                priority_sort_key(item.priority),
                 item.line_index,
             )
         elif sort_mode == "description":
             key = lambda item: (
                 item.completed,
                 normalize_sort_text(item.description),
-                item.priority or "Z{",
+                priority_sort_key(item.priority),
                 item.line_index,
             )
         elif sort_mode == "worked":
             key = lambda item: (
                 item.completed,
                 -item.total_elapsed_seconds(),
-                item.priority or "Z{",
+                priority_sort_key(item.priority),
                 item.line_index,
             )
         else:  # priority
             key = lambda item: (
                 item.completed,
-                item.priority or "Z{",
+                priority_sort_key(item.priority),
                 item.creation_date or "9999-99-99",
                 item.line_index,
             )
@@ -458,7 +504,7 @@ def parse_todo_line(line: str, line_index: int = -1) -> TodoItem:
         if index < len(tokens):
             match = PRIORITY_RE.match(tokens[index])
             if match:
-                priority = match.group(1)
+                priority = tokens[index][1:-1]
                 index += 1
         if index < len(tokens) and is_date_string(tokens[index]):
             creation_date = tokens[index]
