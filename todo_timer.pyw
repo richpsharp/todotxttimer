@@ -415,7 +415,7 @@ def activate_modal_dialog(
     focus_widget: tk.Widget | None = None,
     min_width: int | None = None,
 ) -> None:
-    """Makes a Toplevel visible, focused, and locally modal.
+    """Requests a visible, focused, locally modal Toplevel without blocking.
 
     Args:
         dialog: Toplevel window that should become modal.
@@ -445,16 +445,6 @@ def activate_modal_dialog(
     except tk.TclError:
         pass
 
-    dialog.deiconify()
-    dialog.lift()
-    try:
-        dialog.wait_visibility()
-    except tk.TclError:
-        pass
-
-    (focus_widget or dialog).focus_force()
-    dialog.grab_set()
-
     def clear_topmost() -> None:
         try:
             if dialog.winfo_exists():
@@ -462,7 +452,24 @@ def activate_modal_dialog(
         except tk.TclError:
             pass
 
-    dialog.after(250, clear_topmost)
+    def focus_and_grab() -> None:
+        try:
+            if not dialog.winfo_exists():
+                return
+            master_window.deiconify()
+            master_window.lift()
+            dialog.deiconify()
+            dialog.lift()
+            (focus_widget or dialog).focus_force()
+            dialog.grab_set()
+        except tk.TclError:
+            clear_topmost()
+            return
+        dialog.after(250, clear_topmost)
+
+    dialog.deiconify()
+    dialog.lift()
+    dialog.after(50, focus_and_grab)
 
 
 def close_modal_dialog(dialog: tk.Toplevel) -> None:
