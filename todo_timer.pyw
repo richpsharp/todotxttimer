@@ -523,6 +523,7 @@ class IdleTimerDialog(tk.Toplevel):
             body,
             text=(
                 "Discard idle time stops at your last activity. "
+                "Discard & restart starts a fresh timer now. "
                 "Keep time treats the idle period as work."
             ),
             wraplength=520,
@@ -539,6 +540,11 @@ class IdleTimerDialog(tk.Toplevel):
             button_row,
             text="Discard Idle Time",
             command=lambda: self._finish("discard_idle"),
+        ).pack(side="right", padx=(0, 8))
+        ttk.Button(
+            button_row,
+            text="Discard & Restart",
+            command=lambda: self._finish("discard_idle_restart"),
         ).pack(side="right", padx=(0, 8))
 
         self.protocol("WM_DELETE_WINDOW", lambda: self._finish("discard_idle"))
@@ -4075,6 +4081,22 @@ class TodoTimerApp:
                 item.timer_started_at = None
                 self.status_var.set(
                     "Idle time discarded; timer stopped at last activity."
+                )
+            elif choice == "discard_idle_restart":
+                if item.completed:
+                    messagebox.showinfo(
+                        APP_TITLE,
+                        "Reopen the task before timing it.",
+                        parent=self.root,
+                    )
+                    return
+                now = datetime.now()
+                item.time_spent_seconds = event.running_seconds_at_last_activity
+                item.last_worked_at = event.last_activity_at
+                self.store.start_timer(item.id, now=now)
+                self.start_worked_today_segment(item, now)
+                self.status_var.set(
+                    "Idle time discarded; timer restarted on this task."
                 )
             elif choice == "keep_time":
                 if item.completed:
