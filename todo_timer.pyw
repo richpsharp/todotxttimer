@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 from dataclasses import dataclass
+import math
 import os
 import subprocess
 import sys
@@ -77,6 +78,12 @@ TREE_COLUMN_WIDTHS = {
 MIN_TREE_COLUMN_WIDTH = 20
 MAX_TREE_COLUMN_WIDTH = 2000
 COLUMN_SORT_DIRECTIONS = {"asc", "desc"}
+MACOS_CORE_GRAPHICS_PATH = (
+    "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"
+)
+MACOS_EVENT_SOURCE_HID_SYSTEM_STATE = 1
+MACOS_ANY_INPUT_EVENT_TYPE = 0xFFFFFFFF
+_macos_core_graphics: ctypes.CDLL | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1042,7 +1049,9 @@ class LastInputInfo(ctypes.Structure):
     ]
 
 
-def get_system_idle_seconds() -> int | None:
+def get_windows_system_idle_seconds() -> int | None:
+    if not sys.platform.startswith("win"):
+        return None
     try:
         last_input = LastInputInfo()
         last_input.cbSize = ctypes.sizeof(last_input)
@@ -1053,6 +1062,44 @@ def get_system_idle_seconds() -> int | None:
         return max(0, int(elapsed_ms / 1000))
     except Exception:
         return None
+
+
+def get_macos_core_graphics() -> ctypes.CDLL:
+    global _macos_core_graphics
+    if _macos_core_graphics is None:
+        _macos_core_graphics = ctypes.CDLL(MACOS_CORE_GRAPHICS_PATH)
+        seconds_since_last_event = (
+            _macos_core_graphics.CGEventSourceSecondsSinceLastEventType
+        )
+        seconds_since_last_event.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+        seconds_since_last_event.restype = ctypes.c_double
+    return _macos_core_graphics
+
+
+def get_macos_system_idle_seconds() -> int | None:
+    if sys.platform != "darwin":
+        return None
+    try:
+        seconds_since_last_event = (
+            get_macos_core_graphics().CGEventSourceSecondsSinceLastEventType
+        )
+        idle_seconds = seconds_since_last_event(
+            MACOS_EVENT_SOURCE_HID_SYSTEM_STATE,
+            MACOS_ANY_INPUT_EVENT_TYPE,
+        )
+        if not math.isfinite(idle_seconds) or idle_seconds < 0:
+            return None
+        return max(0, int(idle_seconds))
+    except Exception:
+        return None
+
+
+def get_system_idle_seconds() -> int | None:
+    if sys.platform.startswith("win"):
+        return get_windows_system_idle_seconds()
+    if sys.platform == "darwin":
+        return get_macos_system_idle_seconds()
+    return None
 
 
 class TaskDialog(tk.Toplevel):
@@ -3852,6 +3899,14 @@ class TodoTimerApp:
             )
             return
         idle_seconds = self._current_idle_seconds()
+        if idle_seconds is None:
+            self.idle_status_var.set(
+                status_prefix +
+                "Idle: unavailable | "
+                "Pauses in: unavailable | "
+                f"{check_in_status}"
+            )
+            return
         threshold_seconds = self.idle_timeout_minutes * 60
         remaining_seconds = max(0, threshold_seconds - idle_seconds)
         self.idle_status_var.set(
@@ -3883,11 +3938,16 @@ class TodoTimerApp:
         remaining_seconds = interval_seconds - (elapsed_seconds % interval_seconds)
         return f"Time until check-in: {format_duration(remaining_seconds)}"
 
-    def _current_idle_seconds(self) -> int:
+    def _current_idle_seconds(self) -> int | None:
         system_idle_seconds = get_system_idle_seconds()
         if system_idle_seconds is not None:
             return system_idle_seconds
-        return max(0, int((datetime.now() - self.last_app_activity_at).total_seconds()))
+        if sys.platform == "darwin":
+            return None
+        return max(
+            0,
+            int((datetime.now() - self.last_app_activity_at).total_seconds()),
+        )
 
     def _check_idle_timer(self) -> None:
         if self.idle_dialog_open:
@@ -3897,6 +3957,8 @@ class TodoTimerApp:
             return
 
         idle_seconds = self._current_idle_seconds()
+        if idle_seconds is None:
+            return
         threshold_seconds = self.idle_timeout_minutes * 60
         if idle_seconds < threshold_seconds:
             return
@@ -3977,6 +4039,10 @@ class TodoTimerApp:
 
         now = datetime.now()
         idle_seconds = self._current_idle_seconds()
+        if idle_seconds is None:
+            self.active_without_timer_started_at = None
+            self.active_without_timer_prompt_shown = False
+            return
         if idle_seconds >= ACTIVE_WITHOUT_TIMER_SECONDS:
             self.active_without_timer_started_at = None
             self.active_without_timer_prompt_shown = False
