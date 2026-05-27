@@ -123,31 +123,26 @@ def priority_sort_key(priority: str | None) -> tuple[str, int]:
     return (normalized[0], -len(normalized))
 
 
-def normalize_task_id(value: str | None) -> str | None:
-    """Normalizes a stable task id used for sync matching.
+def validate_task_id(value: str) -> str:
+    """Validates a stable task id used for sync matching.
 
     Args:
         value: Task id text from a ``tid:<value>`` token or Firestore task
-            document. Empty strings and ``None`` mean no stable task id.
+            document.
 
     Returns:
-        Normalized task id text, or ``None`` when no task id was provided.
+        The validated task id text.
 
     Raises:
         TodoFormatError: If the id contains characters that do not fit a
             portable todo.txt metadata token or Firestore document id.
     """
-    if value is None:
-        return None
-    task_id = value.strip()
-    if not task_id:
-        return None
-    if not TASK_ID_RE.fullmatch(task_id):
+    if not TASK_ID_RE.fullmatch(value):
         raise TodoFormatError(
-            f"Invalid task id {task_id!r}. Expected letters, numbers, "
+            f"Invalid task id {value!r}. Expected letters, numbers, "
             "underscores, or hyphens."
         )
-    return task_id
+    return value
 
 
 @dataclass(slots=True)
@@ -166,7 +161,8 @@ class TodoItem:
 
     def __post_init__(self) -> None:
         self.priority = normalize_priority(self.priority)
-        self.task_id = normalize_task_id(self.task_id)
+        if self.task_id is not None:
+            self.task_id = validate_task_id(self.task_id)
         self.creation_date = parse_date_string(self.creation_date)
         self.completion_date = parse_date_string(self.completion_date)
         self.time_spent_seconds = max(0, int(self.time_spent_seconds))
@@ -550,7 +546,7 @@ def parse_todo_line(line: str, line_index: int = -1) -> TodoItem:
         if token.startswith("tid:"):
             candidate = token.split(":", 1)[1]
             try:
-                task_id = normalize_task_id(candidate)
+                task_id = validate_task_id(candidate)
                 continue
             except TodoFormatError:
                 pass
@@ -631,9 +627,7 @@ def ensure_task_id(item: TodoItem) -> str:
         Stable task id suitable for a ``tid:<value>`` token and Firestore
         document id.
     """
-    task_id = normalize_task_id(item.task_id or item.id)
-    if task_id is None:
-        raise TodoFormatError("Task id could not be assigned.")
+    task_id = validate_task_id(item.task_id or item.id)
     item.task_id = task_id
     return task_id
 
@@ -711,7 +705,7 @@ def firestore_document_to_todo_item(
         TodoFormatError: If priority, dates, timestamps, or task id values do
             not match the todo.txt metadata formats.
     """
-    task_id = normalize_task_id(document["tid"] or None)
+    task_id = validate_task_id(document["tid"]) if document["tid"] else None
     item_line_index = (
         int(document["line_index"]) if line_index is None else line_index
     )
