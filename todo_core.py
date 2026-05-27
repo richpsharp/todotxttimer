@@ -678,11 +678,7 @@ def todo_item_to_firestore_document(
     }
 
 
-def firestore_document_to_todo_item(
-    document: Mapping[str, object],
-    *,
-    line_index: int | None = None,
-) -> TodoItem:
+def firestore_document_to_todo_item(document: Mapping[str, object]) -> TodoItem:
     """Converts a Firestore task document back into a todo item.
 
     Args:
@@ -691,8 +687,6 @@ def firestore_document_to_todo_item(
             ``tid``, ``description``, ``completed``, ``priority``,
             ``creation_date``, ``completion_date``, ``time_spent_seconds``,
             ``timer_started_at``, ``last_worked_at``, and ``line_index``.
-        line_index: Optional replacement line index to use instead of the
-            document's ``line_index`` value.
 
     Returns:
         Todo item that can be serialized with ``serialize_todo_line``.
@@ -703,9 +697,6 @@ def firestore_document_to_todo_item(
             not match the todo.txt metadata formats.
     """
     task_id = validate_task_id(document["tid"]) if document["tid"] else None
-    item_line_index = (
-        int(document["line_index"]) if line_index is None else line_index
-    )
     return TodoItem(
         description=document["description"],
         completed=document["completed"],
@@ -715,7 +706,7 @@ def firestore_document_to_todo_item(
         time_spent_seconds=int(document["time_spent_seconds"]),
         timer_started_at=parse_timestamp(document["timer_started_at"] or None),
         last_worked_at=parse_timestamp(document["last_worked_at"] or None),
-        line_index=item_line_index,
+        line_index=int(document["line_index"]),
         task_id=task_id,
         id=task_id or uuid.uuid4().hex,
     )
