@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 import json
 import os
 import re
@@ -15,6 +15,7 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$")
 PRIORITY_RE = re.compile(r"^\(([A-Z])\1*\)$")
 URL_RE = re.compile(r"https?://\S+")
+TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 DATE_FMT = "%Y-%m-%d"
 DATETIME_FMT = "%Y-%m-%d-%H-%M-%S"
@@ -122,6 +123,33 @@ def priority_sort_key(priority: str | None) -> tuple[str, int]:
     return (normalized[0], -len(normalized))
 
 
+def normalize_task_id(value: str | None) -> str | None:
+    """Normalizes a stable task id used for sync matching.
+
+    Args:
+        value: Task id text from a ``tid:<value>`` token or Firestore task
+            document. Empty strings and ``None`` mean no stable task id.
+
+    Returns:
+        Normalized task id text, or ``None`` when no task id was provided.
+
+    Raises:
+        TodoFormatError: If the id contains characters that do not fit a
+            portable todo.txt metadata token or Firestore document id.
+    """
+    if value is None:
+        return None
+    task_id = value.strip()
+    if not task_id:
+        return None
+    if not TASK_ID_RE.fullmatch(task_id):
+        raise TodoFormatError(
+            f"Invalid task id {task_id!r}. Expected letters, numbers, "
+            "underscores, or hyphens."
+        )
+    return task_id
+
+
 @dataclass(slots=True)
 class TodoItem:
     description: str = ""
@@ -133,10 +161,12 @@ class TodoItem:
     timer_started_at: datetime | None = None
     last_worked_at: datetime | None = None
     line_index: int = -1
+    task_id: str | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def __post_init__(self) -> None:
         self.priority = normalize_priority(self.priority)
+        self.task_id = normalize_task_id(self.task_id)
         self.creation_date = parse_date_string(self.creation_date)
         self.completion_date = parse_date_string(self.completion_date)
         self.time_spent_seconds = max(0, int(self.time_spent_seconds))
@@ -514,8 +544,16 @@ def parse_todo_line(line: str, line_index: int = -1) -> TodoItem:
     time_spent_seconds = 0
     timer_started_at: datetime | None = None
     last_worked_at: datetime | None = None
+    task_id: str | None = None
 
     for token in tokens[index:]:
+        if token.startswith("tid:"):
+            candidate = token.split(":", 1)[1]
+            try:
+                task_id = normalize_task_id(candidate)
+                continue
+            except TodoFormatError:
+                pass
         if token.startswith("spent:"):
             candidate = token.split(":", 1)[1]
             try:
@@ -547,6 +585,8 @@ def parse_todo_line(line: str, line_index: int = -1) -> TodoItem:
         timer_started_at=timer_started_at,
         last_worked_at=last_worked_at,
         line_index=line_index,
+        task_id=task_id,
+        id=task_id or uuid.uuid4().hex,
     )
 
 
@@ -566,6 +606,8 @@ def serialize_todo_line(item: TodoItem) -> str:
 
     if item.description:
         parts.append(normalize_single_line(item.description))
+    if item.task_id:
+        parts.append(f"tid:{item.task_id}")
     if item.time_spent_seconds > 0:
         parts.append(f"spent:{format_duration(item.time_spent_seconds)}")
     if item.last_worked_at is not None:
@@ -573,3 +615,177 @@ def serialize_todo_line(item: TodoItem) -> str:
     if item.timer_started_at is not None:
         parts.append(f"active:{format_timestamp(item.timer_started_at)}")
     return " ".join(part for part in parts if part)
+
+
+FIRESTORE_TASK_SCHEMA_VERSION = 1
+
+
+def ensure_task_id(item: TodoItem) -> str:
+    """Ensures a task has a stable id for sync matching.
+
+    Args:
+        item: Parsed todo item. If ``item.task_id`` is empty, this function
+            assigns the item's existing internal ``id`` as its stable task id.
+
+    Returns:
+        Stable task id suitable for a ``tid:<value>`` token and Firestore
+        document id.
+    """
+    task_id = normalize_task_id(item.task_id or item.id)
+    if task_id is None:
+        raise TodoFormatError("Task id could not be assigned.")
+    item.task_id = task_id
+    return task_id
+
+
+def todo_item_to_firestore_document(
+    item: TodoItem,
+    source_id: str = "",
+    *,
+    assign_task_id: bool = False,
+) -> dict[str, object]:
+    """Converts a parsed todo item into a Firestore task document.
+
+    Args:
+        item: Todo item parsed from a todo.txt line.
+        source_id: Source identifier for the local todo.txt file that owns the
+            task. Empty string means the caller has not assigned a source yet.
+        assign_task_id: When true, assign ``item.task_id`` if it is missing so
+            the resulting document can be matched back to the todo.txt line on
+            later syncs.
+
+    Returns:
+        Firestore-ready dictionary with these keys:
+        ``schema_version`` (int), ``tid`` (str), ``source_id`` (str),
+        ``description`` (str), ``completed`` (bool), ``priority`` (str),
+        ``creation_date`` (str), ``completion_date`` (str),
+        ``time_spent_seconds`` (int), ``timer_started_at`` (str),
+        ``last_worked_at`` (str), and ``line_index`` (int).
+    """
+    task_id = ensure_task_id(item) if assign_task_id else item.task_id
+    return {
+        "schema_version": FIRESTORE_TASK_SCHEMA_VERSION,
+        "tid": task_id or "",
+        "source_id": source_id,
+        "description": item.description,
+        "completed": item.completed,
+        "priority": item.priority or "",
+        "creation_date": item.creation_date or "",
+        "completion_date": item.completion_date or "",
+        "time_spent_seconds": item.time_spent_seconds,
+        "timer_started_at": (
+            format_timestamp(item.timer_started_at)
+            if item.timer_started_at is not None
+            else ""
+        ),
+        "last_worked_at": (
+            format_timestamp(item.last_worked_at)
+            if item.last_worked_at is not None
+            else ""
+        ),
+        "line_index": item.line_index,
+    }
+
+
+def firestore_document_to_todo_item(
+    document: Mapping[str, object],
+    *,
+    line_index: int | None = None,
+) -> TodoItem:
+    """Converts a Firestore task document back into a todo item.
+
+    Args:
+        document: Firestore task document produced by
+            ``todo_item_to_firestore_document``. Expected keys are
+            ``tid``, ``description``, ``completed``, ``priority``,
+            ``creation_date``, ``completion_date``, ``time_spent_seconds``,
+            ``timer_started_at``, ``last_worked_at``, and ``line_index``.
+        line_index: Optional replacement line index to use instead of the
+            document's ``line_index`` value.
+
+    Returns:
+        Todo item that can be serialized with ``serialize_todo_line``.
+
+    Raises:
+        KeyError: If a required document key is missing.
+        TodoFormatError: If priority, dates, timestamps, or task id values do
+            not match the todo.txt metadata formats.
+    """
+    task_id = normalize_task_id(document["tid"] or None)
+    item_line_index = (
+        int(document["line_index"]) if line_index is None else line_index
+    )
+    return TodoItem(
+        description=document["description"],
+        completed=document["completed"],
+        priority=document["priority"] or None,
+        creation_date=document["creation_date"] or None,
+        completion_date=document["completion_date"] or None,
+        time_spent_seconds=int(document["time_spent_seconds"]),
+        timer_started_at=parse_timestamp(document["timer_started_at"] or None),
+        last_worked_at=parse_timestamp(document["last_worked_at"] or None),
+        line_index=item_line_index,
+        task_id=task_id,
+        id=task_id or uuid.uuid4().hex,
+    )
+
+
+def todo_text_to_firestore_documents(
+    todo_text: str,
+    source_id: str = "",
+    *,
+    assign_task_ids: bool = False,
+) -> list[dict[str, object]]:
+    """Converts todo.txt content into Firestore task documents.
+
+    Args:
+        todo_text: Full todo.txt file contents.
+        source_id: Source identifier to attach to every produced document.
+        assign_task_ids: When true, assign missing stable task ids so exported
+            documents can be matched back to local lines on later syncs.
+
+    Returns:
+        List of Firestore-ready task dictionaries, one per non-empty todo.txt
+        line, preserving original line indexes.
+    """
+    documents: list[dict[str, object]] = []
+    for index, line in enumerate(todo_text.splitlines()):
+        if not line.strip():
+            continue
+        item = parse_todo_line(line, line_index=index)
+        documents.append(
+            todo_item_to_firestore_document(
+                item,
+                source_id,
+                assign_task_id=assign_task_ids,
+            )
+        )
+    return documents
+
+
+def firestore_documents_to_todo_text(
+    documents: Iterable[Mapping[str, object]],
+) -> str:
+    """Converts Firestore task documents into todo.txt content.
+
+    Args:
+        documents: Firestore task documents produced by
+            ``todo_item_to_firestore_document`` or loaded from Firestore with
+            the same schema. Documents are ordered by ``line_index`` before
+            export.
+
+    Returns:
+        todo.txt content containing one serialized task per line.
+
+    Raises:
+        KeyError: If a required document key is missing.
+        TodoFormatError: If a document contains invalid todo.txt metadata.
+    """
+    ordered_documents = sorted(
+        documents,
+        key=lambda document: (int(document["line_index"]), str(document["tid"])),
+    )
+    return "\n".join(
+        serialize_todo_line(firestore_document_to_todo_item(document))
+        for document in ordered_documents
+    )
