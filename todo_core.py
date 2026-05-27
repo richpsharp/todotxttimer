@@ -751,21 +751,19 @@ def firestore_document_to_todo_item(document: Mapping[str, object]) -> TodoItem:
     """Converts a Firestore task document back into a todo item.
 
     Args:
-        document: Firestore task document produced by
-            ``todo_item_to_firestore_document``. Expected keys are
-            ``tid``, ``description``, ``completed``, ``priority``,
-            ``creation_date``, ``completion_date``, ``time_spent_seconds``,
-            ``timer_started_at``, ``last_worked_at``, and ``line_index``.
+        document: Firestore task document matching
+            ``FIRESTORE_TASK_DOCUMENT_SCHEMA``.
 
     Returns:
         Todo item that can be serialized with ``serialize_todo_line``.
 
     Raises:
-        KeyError: If a required document key is missing.
-        TodoFormatError: If priority, dates, timestamps, or task id values do
-            not match the todo.txt metadata formats.
+        TodoFormatError: If the document does not match
+            ``FIRESTORE_TASK_DOCUMENT_SCHEMA`` or contains invalid todo.txt
+            metadata.
     """
-    task_id = validate_task_id(document["tid"]) if document["tid"] else None
+    validate_firestore_task_document(document)
+    task_id = validate_task_id(document["tid"])
     return TodoItem(
         description=document["description"],
         completed=document["completed"],
@@ -777,7 +775,7 @@ def firestore_document_to_todo_item(document: Mapping[str, object]) -> TodoItem:
         last_worked_at=parse_timestamp(document["last_worked_at"] or None),
         line_index=int(document["line_index"]),
         task_id=task_id,
-        id=task_id or uuid.uuid4().hex,
+        id=task_id,
     )
 
 
@@ -816,20 +814,23 @@ def firestore_documents_to_todo_text(
     """Converts Firestore task documents into todo.txt content.
 
     Args:
-        documents: Firestore task documents produced by
-            ``todo_item_to_firestore_document`` or loaded from Firestore with
-            the same schema. Documents are ordered by ``line_index`` before
-            export.
+        documents: Firestore task documents matching
+            ``FIRESTORE_TASK_DOCUMENT_SCHEMA``. Documents are ordered by
+            ``line_index`` before export.
 
     Returns:
         todo.txt content containing one serialized task per line.
 
     Raises:
-        KeyError: If a required document key is missing.
-        TodoFormatError: If a document contains invalid todo.txt metadata.
+        TodoFormatError: If a document does not match
+            ``FIRESTORE_TASK_DOCUMENT_SCHEMA`` or contains invalid todo.txt
+            metadata.
     """
+    validated_documents = list(documents)
+    for document in validated_documents:
+        validate_firestore_task_document(document)
     ordered_documents = sorted(
-        documents,
+        validated_documents,
         key=lambda document: (int(document["line_index"]), str(document["tid"])),
     )
     return "\n".join(
