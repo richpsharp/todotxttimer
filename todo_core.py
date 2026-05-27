@@ -723,21 +723,18 @@ def firestore_document_to_todo_item(
 
 def todo_text_to_firestore_documents(
     todo_text: str,
-    source_id: str = "",
-    *,
-    assign_task_ids: bool = False,
+    source_id: str,
 ) -> list[dict[str, object]]:
     """Converts todo.txt content into Firestore task documents.
 
     Args:
         todo_text: Full todo.txt file contents.
         source_id: Source identifier to attach to every produced document.
-        assign_task_ids: When true, assign missing stable task ids so exported
-            documents can be matched back to local lines on later syncs.
 
     Returns:
         List of Firestore-ready task dictionaries, one per non-empty todo.txt
-        line, preserving original line indexes.
+        line, preserving original line indexes and assigning missing stable
+        task ids.
     """
     documents: list[dict[str, object]] = []
     for index, line in enumerate(todo_text.splitlines()):
