@@ -614,6 +614,77 @@ def serialize_todo_line(item: TodoItem) -> str:
 
 
 FIRESTORE_TASK_SCHEMA_VERSION = 1
+FIRESTORE_TASK_DOCUMENT_SCHEMA: dict[str, type] = {
+    "schema_version": int,
+    "tid": str,
+    "source_id": str,
+    "description": str,
+    "completed": bool,
+    "priority": str,
+    "creation_date": str,
+    "completion_date": str,
+    "time_spent_seconds": int,
+    "timer_started_at": str,
+    "last_worked_at": str,
+    "line_index": int,
+}
+
+
+def validate_firestore_task_document(document: Mapping[str, object]) -> None:
+    """Validates a Firestore task document against the canonical schema.
+
+    Args:
+        document: Firestore task document with exactly the keys described by
+            ``FIRESTORE_TASK_DOCUMENT_SCHEMA``.
+
+    Raises:
+        TodoFormatError: If required fields are missing, extra fields are
+            present, field types do not match, or todo metadata values are
+            invalid.
+    """
+    expected_fields = set(FIRESTORE_TASK_DOCUMENT_SCHEMA)
+    actual_fields = set(document)
+    missing_fields = sorted(expected_fields - actual_fields)
+    if missing_fields:
+        raise TodoFormatError(
+            "Firestore task document missing fields: "
+            + ", ".join(missing_fields)
+        )
+    extra_fields = sorted(actual_fields - expected_fields)
+    if extra_fields:
+        raise TodoFormatError(
+            "Firestore task document has unexpected fields: "
+            + ", ".join(extra_fields)
+        )
+
+    for field_name, expected_type in FIRESTORE_TASK_DOCUMENT_SCHEMA.items():
+        value = document[field_name]
+        if type(value) is not expected_type:
+            raise TodoFormatError(
+                f"Firestore task document field {field_name!r} must be "
+                f"{expected_type.__name__}."
+            )
+
+    if document["schema_version"] != FIRESTORE_TASK_SCHEMA_VERSION:
+        raise TodoFormatError(
+            "Unsupported Firestore task document schema version: "
+            f"{document['schema_version']!r}."
+        )
+    validate_task_id(document["tid"])
+    validate_task_id(document["source_id"])
+    normalize_priority(document["priority"] or None)
+    parse_date_string(document["creation_date"] or None)
+    parse_date_string(document["completion_date"] or None)
+    parse_timestamp(document["timer_started_at"] or None)
+    parse_timestamp(document["last_worked_at"] or None)
+    if document["time_spent_seconds"] < 0:
+        raise TodoFormatError(
+            "Firestore task document time_spent_seconds must be non-negative."
+        )
+    if document["line_index"] < 0:
+        raise TodoFormatError(
+            "Firestore task document line_index must be non-negative."
+        )
 
 
 def ensure_task_id(item: TodoItem) -> str:
@@ -644,17 +715,13 @@ def todo_item_to_firestore_document(
             task.
 
     Returns:
-        Firestore-ready dictionary with these keys:
-        ``schema_version`` (int), ``tid`` (str), ``source_id`` (str),
-        ``description`` (str), ``completed`` (bool), ``priority`` (str),
-        ``creation_date`` (str), ``completion_date`` (str),
-        ``time_spent_seconds`` (int), ``timer_started_at`` (str),
-        ``last_worked_at`` (str), and ``line_index`` (int).
+        Firestore-ready dictionary matching
+        ``FIRESTORE_TASK_DOCUMENT_SCHEMA``.
     """
     if not source_id:
         raise TodoFormatError("Firestore task documents require a source id.")
     task_id = ensure_task_id(item)
-    return {
+    document: dict[str, object] = {
         "schema_version": FIRESTORE_TASK_SCHEMA_VERSION,
         "tid": task_id,
         "source_id": source_id,
@@ -676,6 +743,8 @@ def todo_item_to_firestore_document(
         ),
         "line_index": item.line_index,
     }
+    validate_firestore_task_document(document)
+    return document
 
 
 def firestore_document_to_todo_item(document: Mapping[str, object]) -> TodoItem:
