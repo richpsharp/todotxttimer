@@ -634,19 +634,14 @@ def ensure_task_id(item: TodoItem) -> str:
 
 def todo_item_to_firestore_document(
     item: TodoItem,
-    source_id: str = "",
-    *,
-    assign_task_id: bool = False,
+    source_id: str,
 ) -> dict[str, object]:
     """Converts a parsed todo item into a Firestore task document.
 
     Args:
         item: Todo item parsed from a todo.txt line.
         source_id: Source identifier for the local todo.txt file that owns the
-            task. Empty string means the caller has not assigned a source yet.
-        assign_task_id: When true, assign ``item.task_id`` if it is missing so
-            the resulting document can be matched back to the todo.txt line on
-            later syncs.
+            task.
 
     Returns:
         Firestore-ready dictionary with these keys:
@@ -656,10 +651,12 @@ def todo_item_to_firestore_document(
         ``time_spent_seconds`` (int), ``timer_started_at`` (str),
         ``last_worked_at`` (str), and ``line_index`` (int).
     """
-    task_id = ensure_task_id(item) if assign_task_id else item.task_id
+    if not source_id:
+        raise TodoFormatError("Firestore task documents require a source id.")
+    task_id = ensure_task_id(item)
     return {
         "schema_version": FIRESTORE_TASK_SCHEMA_VERSION,
-        "tid": task_id or "",
+        "tid": task_id,
         "source_id": source_id,
         "description": item.description,
         "completed": item.completed,
@@ -751,7 +748,6 @@ def todo_text_to_firestore_documents(
             todo_item_to_firestore_document(
                 item,
                 source_id,
-                assign_task_id=assign_task_ids,
             )
         )
     return documents
