@@ -96,6 +96,13 @@ class ShortcutSpec:
     linux_label: str
 
 
+@dataclass(frozen=True, slots=True)
+class FilterTerm:
+    text: str
+    is_excluded: bool
+    tag_only: bool
+
+
 SHORTCUTS = {
     "open_file": ShortcutSpec(
         windows=("<Control-o>",),
@@ -2017,7 +2024,7 @@ class TodoTimerApp:
         filter_frame = ttk.Frame(outer)
         filter_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         filter_frame.columnconfigure(1, weight=1)
-        ttk.Label(filter_frame, text="+ Tag filters").grid(
+        ttk.Label(filter_frame, text="Match").grid(
             row=0, column=0, sticky="w", padx=(0, 8)
         )
         self.project_filter_entry = ttk.Entry(
@@ -3584,23 +3591,26 @@ class TodoTimerApp:
         if self.project_filter_var.get():
             self.project_filter_var.set("")
 
-    def project_filter_terms(self) -> list[tuple[str, bool]]:
+    def project_filter_terms(self) -> list[FilterTerm]:
         expression = self.project_filter_var.get().strip()
         if not expression:
             return []
 
-        terms: list[tuple[str, bool]] = []
-        for raw_tag in expression.split():
-            tag = raw_tag.strip()
-            if not tag:
+        terms: list[FilterTerm] = []
+        for raw_term in expression.split():
+            text = raw_term.strip()
+            if not text:
                 continue
-            if tag.startswith("!"):
-                tag = tag[1:].strip()
-                if not tag:
+            is_excluded = text.startswith("!")
+            if is_excluded:
+                text = text[1:].strip()
+                if not text:
                     continue
-            if not tag.startswith("+"):
-                tag = f"+{tag}"
-            term = (tag.casefold(), raw_tag.strip().startswith("!"))
+            term = FilterTerm(
+                text=text.casefold(),
+                is_excluded=is_excluded,
+                tag_only=text.startswith("+"),
+            )
             if term not in terms:
                 terms.append(term)
         return terms
@@ -3608,15 +3618,22 @@ class TodoTimerApp:
     def item_matches_project_filter(
         self,
         item: TodoItem,
-        filter_terms: list[tuple[str, bool]],
+        filter_terms: list[FilterTerm],
     ) -> bool:
         if not filter_terms:
             return True
         item_projects = {project.casefold() for project in item.projects}
-        return all(
-            (tag not in item_projects if is_excluded else tag in item_projects)
-            for tag, is_excluded in filter_terms
-        )
+        item_text = item.description.casefold()
+        for term in filter_terms:
+            if term.tag_only:
+                is_match = term.text in item_projects
+            else:
+                is_match = term.text in item_text
+            if term.is_excluded and is_match:
+                return False
+            if not term.is_excluded and not is_match:
+                return False
+        return True
 
     @staticmethod
     def format_project_tags(projects: list[str]) -> str:
@@ -3828,7 +3845,7 @@ class TodoTimerApp:
         filter_text = self.project_filter_var.get().strip()
         if filter_text:
             self.filter_status_var.set(
-                f"Showing {len(items)} of {visible_total} tasks due to filters: {filter_text}"
+                f"Showing {len(items)} of {visible_total} tasks matching: {filter_text}"
             )
         else:
             self.filter_status_var.set(
