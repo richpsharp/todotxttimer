@@ -2004,7 +2004,7 @@ class TodoTimerApp:
                 stretch=stretch,
             )
         self.tree.grid(row=0, column=0, sticky="nsew")
-        self.tree.bind("<Double-1>", lambda event: self.edit_selected())
+        self.tree.bind("<Double-1>", self.on_tree_double_click)
         self.tree.bind(
             "<ButtonRelease-1>",
             self.on_tree_button_release,
@@ -3111,6 +3111,27 @@ class TodoTimerApp:
             return self.store.get_by_id(item_id)
         except Exception:
             return None
+
+    def on_tree_double_click(self, event: tk.Event[ttk.Treeview]) -> str:
+        """Starts or stops the timer for the double-clicked task row.
+
+        Args:
+            event: Treeview double-click event. Only cell clicks with a real
+                row id toggle a timer; headings and empty table space are
+                ignored.
+
+        Returns:
+            Tk ``"break"`` to prevent follow-on default double-click handling.
+        """
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return "break"
+        item_id = self.tree.identify_row(event.y)
+        if not item_id:
+            return "break"
+        self.tree.selection_set(item_id)
+        self.tree.focus(item_id)
+        self.toggle_timer_selected()
+        return "break"
 
     def edit_selected(self) -> None:
         item = self.selected_item()
