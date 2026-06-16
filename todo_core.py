@@ -275,6 +275,10 @@ class TodoTaskLineChange:
             task was removed from disk.
         shadow_description: Parsed baseline task description.
         disk_description: Parsed current disk task description.
+        shadow_item: Parsed baseline task, or None when the task is new on
+            disk.
+        disk_item: Parsed current disk task, or None when the task was removed
+            from disk.
     """
 
     task_id: str
@@ -284,6 +288,8 @@ class TodoTaskLineChange:
     disk_text: str
     shadow_description: str
     disk_description: str
+    shadow_item: TodoItem | None
+    disk_item: TodoItem | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -445,6 +451,8 @@ class TodoFileShadow:
                     disk_text=disk_task.text,
                     shadow_description=shadow_task.item.description,
                     disk_description=disk_task.item.description,
+                    shadow_item=shadow_task.item,
+                    disk_item=disk_task.item,
                 )
             )
 
@@ -459,6 +467,8 @@ class TodoFileShadow:
                     disk_text=disk_task.text,
                     shadow_description="",
                     disk_description=disk_task.item.description,
+                    shadow_item=None,
+                    disk_item=disk_task.item,
                 )
             )
 
@@ -473,6 +483,8 @@ class TodoFileShadow:
                     disk_text="",
                     shadow_description=shadow_task.item.description,
                     disk_description="",
+                    shadow_item=shadow_task.item,
+                    disk_item=None,
                 )
             )
 
@@ -483,6 +495,68 @@ class TodoFileShadow:
             unmatched_added_lines=unmatched_added_lines,
             unmatched_removed_lines=unmatched_removed_lines,
         )
+
+    @staticmethod
+    def diff_updates_only_time_metadata(
+        task_diff: TodoTaskLineDiff,
+    ) -> bool:
+        """Returns whether a task diff is safe time metadata only.
+
+        Args:
+            task_diff: Task-level diff produced by describe_task_line_changes.
+
+        Returns:
+            True when every changed task is matched by ``tid`` and changes
+            only ``spent:``, ``lastworked:``, or ``active:`` metadata. False
+            when tasks were added, removed, unmatched, or changed in any
+            non-time field.
+        """
+        if (
+            not task_diff.modified_tasks
+            or task_diff.added_tasks
+            or task_diff.removed_tasks
+            or task_diff.unmatched_added_lines
+            or task_diff.unmatched_removed_lines
+        ):
+            return False
+        return all(
+            TodoFileShadow.task_change_updates_only_time_metadata(change)
+            for change in task_diff.modified_tasks
+        )
+
+    @staticmethod
+    def task_change_updates_only_time_metadata(
+        change: TodoTaskLineChange,
+    ) -> bool:
+        """Returns whether one matched task changed only time metadata.
+
+        Args:
+            change: Modified task line with both baseline and disk parsed
+                TodoItem values.
+
+        Returns:
+            True when all non-time task fields are identical and at least one
+            time metadata field changed.
+        """
+        if change.shadow_item is None or change.disk_item is None:
+            return False
+
+        shadow = change.shadow_item
+        disk = change.disk_item
+        non_time_fields_match = (
+            shadow.task_id == disk.task_id
+            and shadow.description == disk.description
+            and shadow.completed == disk.completed
+            and shadow.priority == disk.priority
+            and shadow.creation_date == disk.creation_date
+            and shadow.completion_date == disk.completion_date
+        )
+        time_fields_changed = (
+            shadow.time_spent_seconds != disk.time_spent_seconds
+            or shadow.timer_started_at != disk.timer_started_at
+            or shadow.last_worked_at != disk.last_worked_at
+        )
+        return non_time_fields_match and time_fields_changed
 
     @staticmethod
     def changed_unmatched_lines(
@@ -650,12 +724,21 @@ class TodoStore:
     def save(self) -> None:
         if self.path is None:
             raise RuntimeError("No todo.txt file is loaded.")
+        self._atomic_write(self.path, self.serialize_content())
+        for index, item in enumerate(self.items):
+            item.line_index = index
+
+    def serialize_content(self) -> str:
+        """Serializes the store to the exact todo.txt save content.
+
+        Returns:
+            Text that TodoStore.save writes to disk, including the trailing
+            newline when at least one task exists.
+        """
         serialized = "\n".join(serialize_todo_line(item) for item in self.items)
         if serialized:
             serialized += "\n"
-        self._atomic_write(self.path, serialized)
-        for index, item in enumerate(self.items):
-            item.line_index = index
+        return serialized
 
     def archive_completed(self, archive_path: str | os.PathLike[str]) -> int:
         if self.path is None:

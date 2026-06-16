@@ -2301,6 +2301,8 @@ class TodoTimerApp:
         change = self.todo_shadow.detect_external_change(self.store.path)
         if change is None:
             return True
+        if self.accept_safe_external_time_change(change):
+            return False
 
         choice = messagebox.askyesnocancel(
             APP_TITLE,
@@ -2327,6 +2329,30 @@ class TodoTimerApp:
             "Save canceled; current app changes are still unsaved."
         )
         return False
+
+    def accept_safe_external_time_change(self, change: TodoFileChange) -> bool:
+        """Accepts external time-only updates when local state is unchanged.
+
+        Args:
+            change: External todo.txt change detected against the shadow
+                baseline.
+
+        Returns:
+            True when the app reloaded the disk file and accepted it as the new
+            baseline. False when the change still requires a user prompt.
+        """
+        if self.store.running_items():
+            return False
+        if not self.todo_shadow.diff_updates_only_time_metadata(change.task_diff):
+            return False
+        if self.store.serialize_content() != change.shadow_content:
+            return False
+
+        self.store.load(change.todo_path)
+        self.accept_current_todo_file_as_baseline()
+        self.refresh_tree()
+        self.status_var.set("Accepted external time-only todo.txt change.")
+        return True
 
     def save_todo_file(self) -> bool:
         """Saves todo.txt after checking for external file changes.
@@ -2355,6 +2381,8 @@ class TodoTimerApp:
         )
         change = self.todo_shadow.detect_external_change(self.store.path)
         if change is None:
+            return
+        if self.accept_safe_external_time_change(change):
             return
 
         self.external_todo_change_prompt_open = True
