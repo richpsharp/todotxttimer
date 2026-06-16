@@ -15,6 +15,7 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$")
 PRIORITY_RE = re.compile(r"^\(([A-Z])\1*\)$")
 URL_RE = re.compile(r"https?://\S+")
+TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 DATE_FMT = "%Y-%m-%d"
 DATETIME_FMT = "%Y-%m-%d-%H-%M-%S"
@@ -122,6 +123,27 @@ def priority_sort_key(priority: str | None) -> tuple[str, int]:
     return (normalized[0], -len(normalized))
 
 
+def validate_task_id(value: str) -> str:
+    """Validates a stable task id used for sync matching.
+
+    Args:
+        value: Task id text from a ``tid:<value>`` token.
+
+    Returns:
+        The validated task id text.
+
+    Raises:
+        TodoFormatError: If the id contains characters that do not fit a
+            portable todo.txt metadata token.
+    """
+    if not TASK_ID_RE.fullmatch(value):
+        raise TodoFormatError(
+            f"Invalid task id {value!r}. Expected letters, numbers, "
+            "underscores, or hyphens."
+        )
+    return value
+
+
 @dataclass(slots=True)
 class TodoItem:
     description: str = ""
@@ -133,10 +155,13 @@ class TodoItem:
     timer_started_at: datetime | None = None
     last_worked_at: datetime | None = None
     line_index: int = -1
+    task_id: str | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def __post_init__(self) -> None:
         self.priority = normalize_priority(self.priority)
+        if self.task_id is not None:
+            self.task_id = validate_task_id(self.task_id)
         self.creation_date = parse_date_string(self.creation_date)
         self.completion_date = parse_date_string(self.completion_date)
         self.time_spent_seconds = max(0, int(self.time_spent_seconds))
@@ -145,6 +170,16 @@ class TodoItem:
         if isinstance(self.last_worked_at, str):
             self.last_worked_at = parse_timestamp(self.last_worked_at)
         self.description = normalize_single_line(self.description)
+
+    def set_todo_tid_if_missing(self) -> str:
+        """Sets a stable todo.txt ``tid`` metadata value when one is missing.
+
+        Returns:
+            Stable task id suitable for serializing as ``tid:<value>``.
+        """
+        if self.task_id is None:
+            self.task_id = validate_task_id(self.id)
+        return self.task_id
 
     @property
     def projects(self) -> list[str]:
@@ -172,11 +207,13 @@ class TodoItem:
 
     def start_timer(self, now: datetime | None = None) -> None:
         if self.timer_started_at is None:
+            self.set_todo_tid_if_missing()
             self.timer_started_at = now or datetime.now()
 
     def stop_timer(self, now: datetime | None = None) -> int:
         if self.timer_started_at is None:
             return 0
+        self.set_todo_tid_if_missing()
         current = now or datetime.now()
         elapsed = max(0, int((current - self.timer_started_at).total_seconds()))
         self.time_spent_seconds += elapsed
@@ -290,6 +327,8 @@ class TodoStore:
         completed = [item for item in self.items if item.completed]
         if not completed:
             return 0
+        for item in completed:
+            item.set_todo_tid_if_missing()
 
         file_path = Path(archive_path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -334,6 +373,7 @@ class TodoStore:
 
     def add_from_text(self, text: str) -> TodoItem:
         item = parse_todo_line(text, line_index=len(self.items))
+        item.set_todo_tid_if_missing()
         self.items.append(item)
         return item
 
@@ -352,6 +392,7 @@ class TodoStore:
         self, item_id: str, today: str | None = None
     ) -> TodoItem:
         item = self.get_by_id(item_id)
+        item.set_todo_tid_if_missing()
         if item.completed:
             item.completed = False
             item.completion_date = None
@@ -366,6 +407,7 @@ class TodoStore:
         item = self.get_by_id(item_id)
         if direction == 0:
             return item
+        item.set_todo_tid_if_missing()
         if item.priority is None:
             item.priority = "A" if direction < 0 else "Z"
             return item
@@ -384,11 +426,13 @@ class TodoStore:
 
     def clear_priority(self, item_id: str) -> TodoItem:
         item = self.get_by_id(item_id)
+        item.set_todo_tid_if_missing()
         item.priority = None
         return item
 
     def update_item(self, item_id: str, **changes: object) -> TodoItem:
         item = self.get_by_id(item_id)
+        item.set_todo_tid_if_missing()
         for key, value in changes.items():
             if not hasattr(item, key):
                 raise AttributeError(key)
@@ -514,8 +558,16 @@ def parse_todo_line(line: str, line_index: int = -1) -> TodoItem:
     time_spent_seconds = 0
     timer_started_at: datetime | None = None
     last_worked_at: datetime | None = None
+    task_id: str | None = None
 
     for token in tokens[index:]:
+        if token.startswith("tid:"):
+            candidate = token.split(":", 1)[1]
+            try:
+                task_id = validate_task_id(candidate)
+                continue
+            except TodoFormatError:
+                pass
         if token.startswith("spent:"):
             candidate = token.split(":", 1)[1]
             try:
@@ -547,6 +599,8 @@ def parse_todo_line(line: str, line_index: int = -1) -> TodoItem:
         timer_started_at=timer_started_at,
         last_worked_at=last_worked_at,
         line_index=line_index,
+        task_id=task_id,
+        id=task_id or uuid.uuid4().hex,
     )
 
 
@@ -566,6 +620,8 @@ def serialize_todo_line(item: TodoItem) -> str:
 
     if item.description:
         parts.append(normalize_single_line(item.description))
+    if item.task_id:
+        parts.append(f"tid:{item.task_id}")
     if item.time_spent_seconds > 0:
         parts.append(f"spent:{format_duration(item.time_spent_seconds)}")
     if item.last_worked_at is not None:
