@@ -171,7 +171,7 @@ class TodoItem:
             self.last_worked_at = parse_timestamp(self.last_worked_at)
         self.description = normalize_single_line(self.description)
 
-    def ensure_task_id(self) -> str:
+    def ensure_todo_tid(self) -> str:
         """Ensures the task has a stable todo.txt ``tid`` metadata value.
 
         Returns:
@@ -207,13 +207,13 @@ class TodoItem:
 
     def start_timer(self, now: datetime | None = None) -> None:
         if self.timer_started_at is None:
-            self.ensure_task_id()
+            self.ensure_todo_tid()
             self.timer_started_at = now or datetime.now()
 
     def stop_timer(self, now: datetime | None = None) -> int:
         if self.timer_started_at is None:
             return 0
-        self.ensure_task_id()
+        self.ensure_todo_tid()
         current = now or datetime.now()
         elapsed = max(0, int((current - self.timer_started_at).total_seconds()))
         self.time_spent_seconds += elapsed
@@ -328,7 +328,7 @@ class TodoStore:
         if not completed:
             return 0
         for item in completed:
-            item.ensure_task_id()
+            item.ensure_todo_tid()
 
         file_path = Path(archive_path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -373,7 +373,7 @@ class TodoStore:
 
     def add_from_text(self, text: str) -> TodoItem:
         item = parse_todo_line(text, line_index=len(self.items))
-        item.ensure_task_id()
+        item.ensure_todo_tid()
         self.items.append(item)
         return item
 
@@ -392,7 +392,7 @@ class TodoStore:
         self, item_id: str, today: str | None = None
     ) -> TodoItem:
         item = self.get_by_id(item_id)
-        item.ensure_task_id()
+        item.ensure_todo_tid()
         if item.completed:
             item.completed = False
             item.completion_date = None
@@ -407,7 +407,7 @@ class TodoStore:
         item = self.get_by_id(item_id)
         if direction == 0:
             return item
-        item.ensure_task_id()
+        item.ensure_todo_tid()
         if item.priority is None:
             item.priority = "A" if direction < 0 else "Z"
             return item
@@ -426,13 +426,13 @@ class TodoStore:
 
     def clear_priority(self, item_id: str) -> TodoItem:
         item = self.get_by_id(item_id)
-        item.ensure_task_id()
+        item.ensure_todo_tid()
         item.priority = None
         return item
 
     def update_item(self, item_id: str, **changes: object) -> TodoItem:
         item = self.get_by_id(item_id)
-        item.ensure_task_id()
+        item.ensure_todo_tid()
         for key, value in changes.items():
             if not hasattr(item, key):
                 raise AttributeError(key)
