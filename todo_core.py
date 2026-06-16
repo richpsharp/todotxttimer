@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field, fields, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
+import hashlib
 import json
 import os
 import re
@@ -240,6 +242,113 @@ class AppConfig:
     worked_today_date: str = ""
     worked_today_seconds: dict[str, int] = field(default_factory=dict)
     worked_today_active_started_at: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class TodoFileChange:
+    """Describes todo.txt content that changed outside the app.
+
+    Args:
+        todo_path: Path to the configured todo.txt file.
+        shadow_path: Path to the app-managed baseline copy.
+        disk_content: Current content read from todo_path.
+        shadow_content: Last known content stored in shadow_path.
+        added_lines: Count of lines present on disk but not in the baseline.
+        removed_lines: Count of baseline lines missing from disk.
+    """
+
+    todo_path: Path
+    shadow_path: Path
+    disk_content: str
+    shadow_content: str
+    added_lines: int
+    removed_lines: int
+
+
+class TodoFileShadow:
+    """Stores per-file todo.txt baselines for external change detection."""
+
+    def __init__(self, folder: str | os.PathLike[str]) -> None:
+        """Creates a shadow store rooted at folder.
+
+        Args:
+            folder: Directory where baseline copies are stored. Each todo.txt
+                path maps to a stable hash-named text file in this directory.
+        """
+        self.folder = Path(folder)
+        self.folder.mkdir(parents=True, exist_ok=True)
+
+    def shadow_path_for(self, todo_path: str | os.PathLike[str]) -> Path:
+        """Returns the baseline path for a todo.txt path.
+
+        Args:
+            todo_path: todo.txt file path to map to a baseline file.
+
+        Returns:
+            Path under this shadow store for the todo.txt path.
+        """
+        resolved = str(Path(todo_path).resolve())
+        digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:16]
+        return self.folder / f"todo_{digest}.txt"
+
+    def detect_external_change(
+        self, todo_path: str | os.PathLike[str]
+    ) -> TodoFileChange | None:
+        """Compares the current todo.txt file to the stored baseline.
+
+        Args:
+            todo_path: todo.txt file to compare against its baseline.
+
+        Returns:
+            TodoFileChange when a baseline exists and differs from disk,
+            otherwise None.
+        """
+        file_path = Path(todo_path)
+        shadow_path = self.shadow_path_for(file_path)
+        if not file_path.exists() or not shadow_path.exists():
+            return None
+
+        disk_content = file_path.read_text(encoding="utf-8")
+        shadow_content = shadow_path.read_text(encoding="utf-8")
+        if disk_content == shadow_content:
+            return None
+
+        disk_lines = Counter(disk_content.splitlines())
+        shadow_lines = Counter(shadow_content.splitlines())
+        added_lines = sum((disk_lines - shadow_lines).values())
+        removed_lines = sum((shadow_lines - disk_lines).values())
+        return TodoFileChange(
+            todo_path=file_path,
+            shadow_path=shadow_path,
+            disk_content=disk_content,
+            shadow_content=shadow_content,
+            added_lines=added_lines,
+            removed_lines=removed_lines,
+        )
+
+    def write_baseline(
+        self,
+        todo_path: str | os.PathLike[str],
+        content: str | None = None,
+    ) -> None:
+        """Writes the current baseline for a todo.txt file.
+
+        Args:
+            todo_path: todo.txt file represented by the baseline.
+            content: Text to write as the baseline. When None, the current
+                todo.txt content is read from disk.
+
+        Raises:
+            FileNotFoundError: If content is None and todo_path does not exist.
+        """
+        file_path = Path(todo_path)
+        baseline = (
+            file_path.read_text(encoding="utf-8")
+            if content is None
+            else content
+        )
+        self.folder.mkdir(parents=True, exist_ok=True)
+        self.shadow_path_for(file_path).write_text(baseline, encoding="utf-8")
 
 
 class ConfigStore:

@@ -18,6 +18,8 @@ import webbrowser
 from todo_core import (
     AppConfig,
     ConfigStore,
+    TodoFileChange,
+    TodoFileShadow,
     TodoFormatError,
     TodoItem,
     TodoStore,
@@ -42,6 +44,7 @@ OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 UPDATE_REMOTE = "origin"
 UPDATE_BRANCH = "main"
 UPDATE_REMOTE_REF = f"{UPDATE_REMOTE}/{UPDATE_BRANCH}"
+EXTERNAL_TODO_CHECK_SECONDS = 60
 TREE_COLUMNS = (
     "projects",
     "done",
@@ -1662,6 +1665,9 @@ class TodoTimerApp:
 
         self.store = TodoStore()
         self.config_store = ConfigStore(APP_TITLE)
+        self.todo_shadow = TodoFileShadow(
+            self.config_store.path.parent / "todo_shadows"
+        )
         self.config = self.config_store.load()
         self.config.column_widths = self.normalized_tree_column_widths(
             self.config.column_widths
@@ -1699,6 +1705,10 @@ class TodoTimerApp:
         self.active_without_timer_started_at: datetime | None = None
         self.active_without_timer_prompt_open = False
         self.active_without_timer_prompt_shown = False
+        self.external_todo_change_prompt_open = False
+        self.next_external_todo_check_at = (
+            datetime.now() + timedelta(seconds=EXTERNAL_TODO_CHECK_SECONDS)
+        )
         self.show_completed_var = tk.BooleanVar(
             value=self.config.show_completed
         )
@@ -2188,6 +2198,128 @@ class TodoTimerApp:
             return
         self.update_connection_status()
 
+    def external_todo_change_message(
+        self,
+        change: TodoFileChange,
+        action_text: str,
+    ) -> str:
+        """Builds user-facing text for an external todo.txt change.
+
+        Args:
+            change: Detected difference between the current todo.txt file and
+                the app's last baseline copy.
+            action_text: Sentence describing what the current prompt can do.
+
+        Returns:
+            Message text suitable for a modal warning.
+        """
+        return (
+            "todo.txt changed outside TodoTimerTXT.\n\n"
+            f"File: {change.todo_path}\n"
+            f"Detected changes: {change.added_lines} added line(s), "
+            f"{change.removed_lines} removed line(s).\n\n"
+            f"{action_text}"
+        )
+
+    def accept_current_todo_file_as_baseline(self) -> None:
+        """Stores the current todo.txt file as the external-change baseline."""
+        if self.store.path is None:
+            return
+        self.todo_shadow.write_baseline(self.store.path)
+        self.next_external_todo_check_at = (
+            datetime.now() + timedelta(seconds=EXTERNAL_TODO_CHECK_SECONDS)
+        )
+
+    def confirm_todo_save_target_is_current(self) -> bool:
+        """Confirms whether a save may overwrite externally changed todo.txt.
+
+        Returns:
+            True when the current app state may be saved. False when the user
+            reloaded from disk or canceled the save.
+        """
+        self.ensure_file_loaded()
+        change = self.todo_shadow.detect_external_change(self.store.path)
+        if change is None:
+            return True
+
+        choice = messagebox.askyesnocancel(
+            APP_TITLE,
+            self.external_todo_change_message(
+                change,
+                (
+                    "Yes: reload todo.txt from disk and cancel this save.\n"
+                    "No: overwrite todo.txt with the current app state.\n"
+                    "Cancel: keep current app changes unsaved."
+                ),
+            ),
+            parent=self.root,
+        )
+        if choice is True:
+            self.store.load(change.todo_path)
+            self.accept_current_todo_file_as_baseline()
+            self.refresh_tree()
+            self.status_var.set("Reloaded todo.txt after external changes.")
+            return False
+        if choice is False:
+            return True
+        self.refresh_tree()
+        self.status_var.set(
+            "Save canceled; current app changes are still unsaved."
+        )
+        return False
+
+    def save_todo_file(self) -> bool:
+        """Saves todo.txt after checking for external file changes.
+
+        Returns:
+            True when todo.txt was saved. False when saving was canceled or the
+            file was reloaded from disk instead.
+        """
+        if not self.confirm_todo_save_target_is_current():
+            return False
+        self.store.save()
+        self.accept_current_todo_file_as_baseline()
+        return True
+
+    def check_for_external_todo_changes_if_due(self) -> None:
+        """Periodically checks for todo.txt edits made outside the app."""
+        if (
+            self.store.path is None
+            or self.external_todo_change_prompt_open
+            or datetime.now() < self.next_external_todo_check_at
+        ):
+            return
+
+        self.next_external_todo_check_at = (
+            datetime.now() + timedelta(seconds=EXTERNAL_TODO_CHECK_SECONDS)
+        )
+        change = self.todo_shadow.detect_external_change(self.store.path)
+        if change is None:
+            return
+
+        self.external_todo_change_prompt_open = True
+        try:
+            should_reload = messagebox.askyesno(
+                APP_TITLE,
+                self.external_todo_change_message(
+                    change,
+                    "Reload todo.txt from disk now?",
+                ),
+                parent=self.root,
+            )
+            if should_reload:
+                self.store.load(change.todo_path)
+                self.accept_current_todo_file_as_baseline()
+                self.refresh_tree()
+                self.status_var.set("Reloaded todo.txt after external changes.")
+            else:
+                self.status_var.set(
+                    "External todo.txt changes detected; save will ask before "
+                    "overwriting."
+                )
+        finally:
+            self.external_todo_change_prompt_open = False
+
     def roll_over_worked_today_if_date_changed(
         self,
         now: datetime | None = None,
@@ -2662,13 +2794,27 @@ class TodoTimerApp:
         self.store.load(path)
         self.path_var.set(str(Path(path)))
         self.config.last_file = str(Path(path))
+        external_change = self.todo_shadow.detect_external_change(self.store.path)
         config_save_error = None
         try:
             self.config_store.save(self.config)
         except Exception as exc:
             config_save_error = exc
+        self.accept_current_todo_file_as_baseline()
         self.update_connection_status()
         self.refresh_tree()
+        if external_change is not None:
+            messagebox.showwarning(
+                APP_TITLE,
+                self.external_todo_change_message(
+                    external_change,
+                    (
+                        "The current disk version was loaded and is now the "
+                        "baseline for future change checks."
+                    ),
+                ),
+                parent=self.root,
+            )
         if config_save_error:
             self.status_var.set(
                 f"Loaded file, but could not save config: {config_save_error}"
@@ -2715,7 +2861,8 @@ class TodoTimerApp:
         try:
             if dialog.result == "stop_at_close":
                 self.store.stop_timer(item.id, now=closed_at)
-                self.store.save()
+                if not self.save_todo_file():
+                    return
                 self.refresh_tree(select_item_id=item.id)
                 self.status_var.set(
                     "Timer was stopped at the previous app close time."
@@ -2748,7 +2895,8 @@ class TodoTimerApp:
             self.choose_file()
             return
         try:
-            self.store.save()
+            if not self.save_todo_file():
+                return
             self.status_var.set(
                 f"Saved {len(self.store.items)} task(s) to {self.store.path}"
             )
@@ -2778,7 +2926,10 @@ class TodoTimerApp:
                 parent=self.root,
             ):
                 return
+            if not self.confirm_todo_save_target_is_current():
+                return
             archived_count = self.store.archive_completed(archive_path)
+            self.accept_current_todo_file_as_baseline()
             loaded_signatures = {
                 self.worked_today_task_signature(item)
                 for item in self.store.items
@@ -3092,7 +3243,8 @@ class TodoTimerApp:
             item = self.store.add_from_text(text)
             if not item.creation_date and not item.completed:
                 item.creation_date = self.today_string()
-            self.store.save()
+            if not self.save_todo_file():
+                return
             self.quick_add_var.set("")
             self.refresh_tree(select_item_id=item.id)
             self.tree.focus_set()
@@ -3161,7 +3313,8 @@ class TodoTimerApp:
                 previous_worked_today_signature,
                 item,
             )
-            self.store.save()
+            if not self.save_todo_file():
+                return
             self.save_current_config()
             self.refresh_tree(select_item_id=item.id)
             self.status_var.set("Task updated.")
@@ -3192,7 +3345,8 @@ class TodoTimerApp:
                 previous_worked_today_signature,
                 item,
             )
-            self.store.save()
+            if not self.save_todo_file():
+                return
             self.save_current_config()
             self.refresh_tree(select_item_id=item.id)
             self.status_var.set("Note appended.")
@@ -3209,7 +3363,8 @@ class TodoTimerApp:
             if item.timer_started_at is not None:
                 self.finish_worked_today_segment(item, datetime.now())
             self.store.toggle_complete(item.id, today=self.today_string())
-            self.store.save()
+            if not self.save_todo_file():
+                return
             self.save_current_config()
             self.refresh_tree(select_item_id=item.id)
             self.status_var.set("Completion toggled.")
@@ -3235,7 +3390,8 @@ class TodoTimerApp:
             self.config.worked_today_seconds.pop(signature, None)
             self.config.worked_today_active_started_at.pop(signature, None)
             self.store.delete_item(item.id)
-            self.store.save()
+            if not self.save_todo_file():
+                return
             self.save_current_config()
             self.refresh_tree()
             self.status_var.set("Task deleted.")
@@ -3263,7 +3419,8 @@ class TodoTimerApp:
                 self.check_in_prompt_buckets.pop(item.id, None)
                 self.store.start_timer(item.id, now=now)
                 self.start_worked_today_segment(item, now)
-                self.store.save()
+                if not self.save_todo_file():
+                    return
                 self.save_current_config()
                 if stopped:
                     self.status_var.set(
@@ -3274,7 +3431,8 @@ class TodoTimerApp:
             else:
                 self.finish_worked_today_segment(item, now)
                 self.store.stop_timer(item.id, now=now)
-                self.store.save()
+                if not self.save_todo_file():
+                    return
                 self.save_current_config()
                 self.status_var.set("Timer stopped.")
             self.refresh_tree(select_item_id=item.id)
@@ -3309,7 +3467,8 @@ class TodoTimerApp:
                     seconds=new_total
                 )
             self.set_worked_today_total(item, new_worked_today, now)
-            self.store.save()
+            if not self.save_todo_file():
+                return
             self.save_current_config()
             self.refresh_tree(select_item_id=item.id)
             self.status_var.set(
@@ -3397,7 +3556,8 @@ class TodoTimerApp:
             )
             self.check_in_prompt_buckets.pop(source_item.id, None)
             self.check_in_prompt_buckets.pop(destination_item.id, None)
-            self.store.save()
+            if not self.save_todo_file():
+                return
             self.save_current_config()
             self.refresh_tree(select_item_id=destination_item.id)
             self.status_var.set(
@@ -3467,7 +3627,8 @@ class TodoTimerApp:
             return
         try:
             self.store.adjust_priority(item.id, -1)
-            self.store.save()
+            if not self.save_todo_file():
+                return
             self.refresh_tree(select_item_id=item.id)
         except Exception as exc:
             messagebox.showerror(
@@ -3482,7 +3643,8 @@ class TodoTimerApp:
             return
         try:
             self.store.adjust_priority(item.id, 1)
-            self.store.save()
+            if not self.save_todo_file():
+                return
             self.refresh_tree(select_item_id=item.id)
         except Exception as exc:
             messagebox.showerror(
@@ -3497,7 +3659,8 @@ class TodoTimerApp:
             return
         try:
             self.store.clear_priority(item.id)
-            self.store.save()
+            if not self.save_todo_file():
+                return
             self.refresh_tree(select_item_id=item.id)
         except Exception as exc:
             messagebox.showerror(
@@ -4155,7 +4318,8 @@ class TodoTimerApp:
 
         self.finish_worked_today_segment(item, last_activity_at)
         self.store.stop_timer(item.id, now=detected_at)
-        self.store.save()
+        if not self.save_todo_file():
+            return
         self.save_current_config()
         self.refresh_tree(select_item_id=item.id)
         self.status_var.set("Timer stopped after keyboard/mouse inactivity.")
@@ -4234,7 +4398,8 @@ class TodoTimerApp:
                 self.status_var.set("Idle time kept; timer is still running.")
             else:
                 self.status_var.set("Timer left stopped after inactivity.")
-            self.store.save()
+            if not self.save_todo_file():
+                return
             self.save_current_config()
             self.refresh_tree(select_item_id=item.id)
         except Exception as exc:
@@ -4250,6 +4415,7 @@ class TodoTimerApp:
         self._check_idle_timer()
         self._check_running_task_check_in()
         self._check_active_without_timer()
+        self.check_for_external_todo_changes_if_due()
         if self.store.running_items():
             selected = (
                 self.tree.selection()[0] if self.tree.selection() else None
