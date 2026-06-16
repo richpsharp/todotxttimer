@@ -3300,6 +3300,7 @@ class TodoTimerApp:
             new_total = max(0, current_total + delta_seconds)
             actual_delta = new_total - current_total
             new_worked_today = max(0, current_worked_today + actual_delta)
+            item.ensure_task_id()
             if item.timer_started_at is None:
                 item.time_spent_seconds = new_total
             else:
@@ -3435,6 +3436,8 @@ class TodoTimerApp:
         )
         if reallocated_seconds <= 0:
             raise RuntimeError("Reallocated time must be greater than zero.")
+        source_item.ensure_task_id()
+        destination_item.ensure_task_id()
 
         source_remainder_seconds = active_seconds - reallocated_seconds
         source_key = self.worked_today_task_signature(source_item)
@@ -4179,6 +4182,7 @@ class TodoTimerApp:
             return
 
         try:
+            item.ensure_task_id()
             if choice == "discard_idle":
                 item.time_spent_seconds = event.running_seconds_at_last_activity
                 item.last_worked_at = event.last_activity_at
