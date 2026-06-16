@@ -2213,11 +2213,71 @@ class TodoTimerApp:
         Returns:
             Message text suitable for a modal warning.
         """
+        task_diff = change.task_diff
+        summary_parts = []
+        if task_diff.modified_tasks:
+            summary_parts.append(
+                f"{len(task_diff.modified_tasks)} modified task(s)"
+            )
+        if task_diff.added_tasks:
+            summary_parts.append(f"{len(task_diff.added_tasks)} added task(s)")
+        if task_diff.removed_tasks:
+            summary_parts.append(
+                f"{len(task_diff.removed_tasks)} removed task(s)"
+            )
+        if task_diff.unmatched_added_lines:
+            summary_parts.append(
+                f"{len(task_diff.unmatched_added_lines)} unmatched added line(s)"
+            )
+        if task_diff.unmatched_removed_lines:
+            summary_parts.append(
+                f"{len(task_diff.unmatched_removed_lines)} "
+                "unmatched removed line(s)"
+            )
+        if not summary_parts:
+            summary_parts.append(
+                f"{change.added_lines} added line(s), "
+                f"{change.removed_lines} removed line(s)"
+            )
+
+        detail_lines: list[str] = []
+        for item in task_diff.modified_tasks[:3]:
+            if item.shadow_description == item.disk_description:
+                detail_lines.append(f"- Modified: {item.disk_description}")
+            else:
+                detail_lines.append(
+                    "- Modified: "
+                    f"{item.shadow_description} -> {item.disk_description}"
+                )
+        for item in task_diff.added_tasks[:2]:
+            detail_lines.append(f"- Added: {item.disk_description}")
+        for item in task_diff.removed_tasks[:2]:
+            detail_lines.append(f"- Removed: {item.shadow_description}")
+
+        shown_details = (
+            len(task_diff.modified_tasks[:3])
+            + len(task_diff.added_tasks[:2])
+            + len(task_diff.removed_tasks[:2])
+        )
+        total_details = (
+            len(task_diff.modified_tasks)
+            + len(task_diff.added_tasks)
+            + len(task_diff.removed_tasks)
+        )
+        if total_details > shown_details:
+            detail_lines.append(
+                f"- {total_details - shown_details} more task-level change(s)"
+            )
+
+        details = ""
+        if detail_lines:
+            details = "\n\nTask-level changes:\n" + "\n".join(detail_lines)
+
         return (
             "todo.txt changed outside TodoTimerTXT.\n\n"
             f"File: {change.todo_path}\n"
-            f"Detected changes: {change.added_lines} added line(s), "
-            f"{change.removed_lines} removed line(s).\n\n"
+            f"Detected changes: {', '.join(summary_parts)}."
+            f"{details}\n\n"
             f"{action_text}"
         )
 

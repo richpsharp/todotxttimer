@@ -245,6 +245,72 @@ class AppConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class TodoTaskLine:
+    """Stores one parsed todo.txt line used in external diff analysis.
+
+    Args:
+        line_number: One-based line number from the source file.
+        text: Original todo.txt line text.
+        item: Parsed todo item for the line.
+    """
+
+    line_number: int
+    text: str
+    item: TodoItem
+
+
+@dataclass(frozen=True, slots=True)
+class TodoTaskLineChange:
+    """Describes one task-level line change in todo.txt.
+
+    Args:
+        task_id: Stable ``tid`` value used to match the task.
+        shadow_line_number: One-based line number in the baseline file, or
+            None for a task that only exists on disk.
+        disk_line_number: One-based line number in the current disk file, or
+            None for a task that only exists in the baseline.
+        shadow_text: Baseline todo.txt line text, or an empty string when the
+            task is new on disk.
+        disk_text: Current disk todo.txt line text, or an empty string when the
+            task was removed from disk.
+        shadow_description: Parsed baseline task description.
+        disk_description: Parsed current disk task description.
+    """
+
+    task_id: str
+    shadow_line_number: int | None
+    disk_line_number: int | None
+    shadow_text: str
+    disk_text: str
+    shadow_description: str
+    disk_description: str
+
+
+@dataclass(frozen=True, slots=True)
+class TodoTaskLineDiff:
+    """Groups todo.txt external differences by task-level meaning.
+
+    Args:
+        modified_tasks: Tasks where the same ``tid`` exists in both files but
+            the serialized line text changed.
+        added_tasks: Tasks with a ``tid`` that exists only in the current disk
+            file.
+        removed_tasks: Tasks with a ``tid`` that exists only in the baseline
+            file.
+        unmatched_added_lines: Current disk lines that cannot be matched by
+            ``tid``. This includes tasks without ``tid`` and unparsable lines.
+        unmatched_removed_lines: Baseline lines that cannot be matched by
+            ``tid``. This includes tasks without ``tid`` and unparsable lines.
+    """
+
+    modified_tasks: list[TodoTaskLineChange] = field(default_factory=list)
+    added_tasks: list[TodoTaskLineChange] = field(default_factory=list)
+    removed_tasks: list[TodoTaskLineChange] = field(default_factory=list)
+    unmatched_added_lines: list[str] = field(default_factory=list)
+    unmatched_removed_lines: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
 class TodoFileChange:
     """Describes todo.txt content that changed outside the app.
 
@@ -255,6 +321,7 @@ class TodoFileChange:
         shadow_content: Last known content stored in shadow_path.
         added_lines: Count of lines present on disk but not in the baseline.
         removed_lines: Count of baseline lines missing from disk.
+        task_diff: Task-level classification of changed lines.
     """
 
     todo_path: Path
@@ -263,6 +330,7 @@ class TodoFileChange:
     shadow_content: str
     added_lines: int
     removed_lines: int
+    task_diff: TodoTaskLineDiff = field(default_factory=TodoTaskLineDiff)
 
 
 class TodoFileShadow:
@@ -317,6 +385,10 @@ class TodoFileShadow:
         shadow_lines = Counter(shadow_content.splitlines())
         added_lines = sum((disk_lines - shadow_lines).values())
         removed_lines = sum((shadow_lines - disk_lines).values())
+        task_diff = self.describe_task_line_changes(
+            shadow_content,
+            disk_content,
+        )
         return TodoFileChange(
             todo_path=file_path,
             shadow_path=shadow_path,
@@ -324,7 +396,163 @@ class TodoFileShadow:
             shadow_content=shadow_content,
             added_lines=added_lines,
             removed_lines=removed_lines,
+            task_diff=task_diff,
         )
+
+    def describe_task_line_changes(
+        self,
+        shadow_content: str,
+        disk_content: str,
+    ) -> TodoTaskLineDiff:
+        """Classifies changed todo.txt lines by stable task id.
+
+        Args:
+            shadow_content: Baseline todo.txt content previously written by
+                the app.
+            disk_content: Current todo.txt content read from disk.
+
+        Returns:
+            TodoTaskLineDiff with modified, added, removed, and unmatched line
+            changes. Duplicate ``tid`` values are treated as unmatched because
+            they cannot be safely mapped to a single task.
+        """
+        shadow_tasks, shadow_unmatched = self.task_lines_by_tid(shadow_content)
+        disk_tasks, disk_unmatched = self.task_lines_by_tid(disk_content)
+        unmatched_added_lines = self.changed_unmatched_lines(
+            disk_unmatched,
+            shadow_unmatched,
+        )
+        unmatched_removed_lines = self.changed_unmatched_lines(
+            shadow_unmatched,
+            disk_unmatched,
+        )
+
+        modified_tasks: list[TodoTaskLineChange] = []
+        added_tasks: list[TodoTaskLineChange] = []
+        removed_tasks: list[TodoTaskLineChange] = []
+
+        for task_id in sorted(shadow_tasks.keys() & disk_tasks.keys()):
+            shadow_task = shadow_tasks[task_id]
+            disk_task = disk_tasks[task_id]
+            if shadow_task.text == disk_task.text:
+                continue
+            modified_tasks.append(
+                TodoTaskLineChange(
+                    task_id=task_id,
+                    shadow_line_number=shadow_task.line_number,
+                    disk_line_number=disk_task.line_number,
+                    shadow_text=shadow_task.text,
+                    disk_text=disk_task.text,
+                    shadow_description=shadow_task.item.description,
+                    disk_description=disk_task.item.description,
+                )
+            )
+
+        for task_id in sorted(disk_tasks.keys() - shadow_tasks.keys()):
+            disk_task = disk_tasks[task_id]
+            added_tasks.append(
+                TodoTaskLineChange(
+                    task_id=task_id,
+                    shadow_line_number=None,
+                    disk_line_number=disk_task.line_number,
+                    shadow_text="",
+                    disk_text=disk_task.text,
+                    shadow_description="",
+                    disk_description=disk_task.item.description,
+                )
+            )
+
+        for task_id in sorted(shadow_tasks.keys() - disk_tasks.keys()):
+            shadow_task = shadow_tasks[task_id]
+            removed_tasks.append(
+                TodoTaskLineChange(
+                    task_id=task_id,
+                    shadow_line_number=shadow_task.line_number,
+                    disk_line_number=None,
+                    shadow_text=shadow_task.text,
+                    disk_text="",
+                    shadow_description=shadow_task.item.description,
+                    disk_description="",
+                )
+            )
+
+        return TodoTaskLineDiff(
+            modified_tasks=modified_tasks,
+            added_tasks=added_tasks,
+            removed_tasks=removed_tasks,
+            unmatched_added_lines=unmatched_added_lines,
+            unmatched_removed_lines=unmatched_removed_lines,
+        )
+
+    @staticmethod
+    def changed_unmatched_lines(
+        changed_lines: list[str],
+        baseline_lines: list[str],
+    ) -> list[str]:
+        """Returns unmatched lines present after removing unchanged matches.
+
+        Args:
+            changed_lines: Candidate changed lines from one side of a diff.
+            baseline_lines: Lines from the other side of the diff.
+
+        Returns:
+            Lines from changed_lines that are not canceled out by equal lines
+            in baseline_lines, preserving changed_lines order.
+        """
+        remaining_baseline = Counter(baseline_lines)
+        result: list[str] = []
+        for line in changed_lines:
+            if remaining_baseline[line]:
+                remaining_baseline[line] -= 1
+            else:
+                result.append(line)
+        return result
+
+    @staticmethod
+    def task_lines_by_tid(
+        content: str,
+    ) -> tuple[dict[str, TodoTaskLine], list[str]]:
+        """Maps todo.txt lines by stable ``tid`` metadata.
+
+        Args:
+            content: todo.txt file content.
+
+        Returns:
+            Tuple of ``(task_lines, unmatched_lines)`` where task_lines maps
+            ``tid`` values to parsed task lines and unmatched_lines contains
+            nonblank lines that could not be safely keyed by ``tid``.
+        """
+        task_lines: dict[str, TodoTaskLine] = {}
+        unmatched_lines: list[str] = []
+        duplicate_task_ids: set[str] = set()
+
+        for line_number, line in enumerate(content.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                item = parse_todo_line(line, line_index=line_number - 1)
+            except TodoFormatError:
+                unmatched_lines.append(line)
+                continue
+            if item.task_id is None:
+                unmatched_lines.append(line)
+                continue
+            if item.task_id in task_lines:
+                duplicate_task_ids.add(item.task_id)
+                unmatched_lines.append(task_lines[item.task_id].text)
+                unmatched_lines.append(line)
+                del task_lines[item.task_id]
+                continue
+            if item.task_id in duplicate_task_ids:
+                unmatched_lines.append(line)
+                continue
+            task_lines[item.task_id] = TodoTaskLine(
+                line_number=line_number,
+                text=line,
+                item=item,
+            )
+
+        return task_lines, unmatched_lines
 
     def write_baseline(
         self,
