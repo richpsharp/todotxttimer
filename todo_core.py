@@ -525,6 +525,30 @@ class TodoFileShadow:
         )
 
     @staticmethod
+    def diff_can_auto_accept_without_merge_base(
+        task_diff: TodoTaskLineDiff,
+    ) -> bool:
+        """Returns whether a diff is safe to reload without a merge base.
+
+        Args:
+            task_diff: Task-level diff produced by describe_task_line_changes.
+
+        Returns:
+            True when every changed task is matched by ``tid`` and only
+            non-total time metadata changed. Changes to ``spent:`` or
+            ``active:`` return False because they can replace work from another
+            machine unless a common ancestor is available for summing deltas.
+        """
+        if not TodoFileShadow.diff_updates_only_time_metadata(task_diff):
+            return False
+        return all(
+            TodoFileShadow.task_change_updates_only_non_total_time_metadata(
+                change
+            )
+            for change in task_diff.modified_tasks
+        )
+
+    @staticmethod
     def task_change_updates_only_time_metadata(
         change: TodoTaskLineChange,
     ) -> bool:
@@ -557,6 +581,34 @@ class TodoFileShadow:
             or shadow.last_worked_at != disk.last_worked_at
         )
         return non_time_fields_match and time_fields_changed
+
+    @staticmethod
+    def task_change_updates_only_non_total_time_metadata(
+        change: TodoTaskLineChange,
+    ) -> bool:
+        """Returns whether one task changed only non-total time metadata.
+
+        Args:
+            change: Modified task line with both baseline and disk parsed
+                TodoItem values.
+
+        Returns:
+            True when ``lastworked:`` changed without changing ``spent:`` or
+            ``active:``. These changes are safe to reload without a common
+            ancestor because they do not replace accumulated work totals.
+        """
+        if not TodoFileShadow.task_change_updates_only_time_metadata(change):
+            return False
+
+        shadow = change.shadow_item
+        disk = change.disk_item
+        if shadow is None or disk is None:
+            return False
+        return (
+            shadow.time_spent_seconds == disk.time_spent_seconds
+            and shadow.timer_started_at == disk.timer_started_at
+            and shadow.last_worked_at != disk.last_worked_at
+        )
 
     @staticmethod
     def changed_unmatched_lines(

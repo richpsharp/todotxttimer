@@ -2343,7 +2343,9 @@ class TodoTimerApp:
         """
         if self.store.running_items():
             return False
-        if not self.todo_shadow.diff_updates_only_time_metadata(change.task_diff):
+        if not self.todo_shadow.diff_can_auto_accept_without_merge_base(
+            change.task_diff
+        ):
             return False
         if self.store.serialize_content() != change.shadow_content:
             return False
