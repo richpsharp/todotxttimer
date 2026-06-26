@@ -185,11 +185,7 @@ class TodoItem:
 
     @property
     def projects(self) -> list[str]:
-        return [
-            token
-            for token in self.description.split()
-            if token.startswith("+") and len(token) > 1
-        ]
+        return split_task_description_tags(self.description)[1]
 
     @property
     def contexts(self) -> list[str]:
@@ -988,6 +984,34 @@ def normalize_single_line(value: str) -> str:
 
 def normalize_sort_text(value: str) -> str:
     return normalize_single_line(value).casefold()
+
+
+def is_project_tag_token(token: str) -> bool:
+    return token.startswith("+") and len(token) > 1
+
+
+def split_task_description_tags(description: str) -> tuple[str, list[str]]:
+    tokens = normalize_single_line(description).split()
+    tag_tokens = [token for token in tokens if is_project_tag_token(token)]
+    description_tokens = [
+        token for token in tokens if not is_project_tag_token(token)
+    ]
+    return " ".join(description_tokens), tag_tokens
+
+
+def normalize_project_tag_tokens(tags: str) -> list[str]:
+    project_tags: list[str] = []
+    for token in normalize_single_line(tags).split():
+        tag = token if token.startswith("+") else f"+{token}"
+        if is_project_tag_token(tag):
+            project_tags.append(tag)
+    return project_tags
+
+
+def compose_task_description(description: str, tags: str) -> str:
+    description_text, inline_tags = split_task_description_tags(description)
+    project_tags = inline_tags + normalize_project_tag_tokens(tags)
+    return normalize_single_line(" ".join([description_text, *project_tags]))
 
 
 def extract_first_url(text: str) -> str | None:
