@@ -23,6 +23,7 @@ from todo_core import (
     TodoFormatError,
     TodoItem,
     TodoStore,
+    compose_task_description,
     extract_first_url,
     format_duration,
     format_timestamp,
@@ -33,6 +34,7 @@ from todo_core import (
     parse_timestamp,
     parse_todo_line,
     serialize_todo_line,
+    split_task_description_tags,
 )
 
 APP_TITLE = "TodoTimerTXT"
@@ -1138,6 +1140,13 @@ class TaskDialog(tk.Toplevel):
                 else ""
             )
         )
+        description_value = ""
+        project_tags: list[str] = []
+        if item:
+            description_value, project_tags = split_task_description_tags(
+                item.description
+            )
+        self.project_tags_var = tk.StringVar(value=" ".join(project_tags))
 
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
@@ -1152,24 +1161,32 @@ class TaskDialog(tk.Toplevel):
         )
         self.description_text = tk.Text(body, height=5, width=90, wrap="word")
         self.description_text.grid(row=0, column=1, sticky="nsew", pady=(0, 8))
-        if item:
-            self.description_text.insert("1.0", item.description)
+        self.description_text.insert("1.0", description_value)
+
+        ttk.Label(body, text="+ Tags").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        ttk.Entry(
+            body,
+            textvariable=self.project_tags_var,
+            width=72,
+        ).grid(row=1, column=1, sticky="ew", pady=4)
 
         ttk.Label(body, text="Priority").grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=4
+            row=2, column=0, sticky="w", padx=(0, 8), pady=4
         )
         self.priority_entry = ttk.Entry(
             body,
             textvariable=self.priority_var,
             width=12,
         )
-        self.priority_entry.grid(row=1, column=1, sticky="w", pady=4)
+        self.priority_entry.grid(row=2, column=1, sticky="w", pady=4)
 
         ttk.Label(body, text="Created").grid(
-            row=2, column=0, sticky="w", padx=(0, 8), pady=4
+            row=3, column=0, sticky="w", padx=(0, 8), pady=4
         )
         ttk.Entry(body, textvariable=self.created_var, width=18).grid(
-            row=2, column=1, sticky="w", pady=4
+            row=3, column=1, sticky="w", pady=4
         )
 
         ttk.Checkbutton(
@@ -1177,36 +1194,36 @@ class TaskDialog(tk.Toplevel):
             text="Completed",
             variable=self.completed_var,
             command=self._toggle_completion,
-        ).grid(row=3, column=1, sticky="w", pady=4)
+        ).grid(row=4, column=1, sticky="w", pady=4)
 
         ttk.Label(body, text="Completed date").grid(
-            row=4, column=0, sticky="w", padx=(0, 8), pady=4
+            row=5, column=0, sticky="w", padx=(0, 8), pady=4
         )
         self.completed_entry = ttk.Entry(
             body, textvariable=self.completed_date_var, width=18
         )
-        self.completed_entry.grid(row=4, column=1, sticky="w", pady=4)
+        self.completed_entry.grid(row=5, column=1, sticky="w", pady=4)
 
         ttk.Separator(body, orient="horizontal").grid(
-            row=5, column=0, columnspan=2, sticky="ew", pady=8
+            row=6, column=0, columnspan=2, sticky="ew", pady=8
         )
 
         ttk.Label(body, text="Tracked time").grid(
-            row=6, column=0, sticky="w", padx=(0, 8), pady=4
-        )
-        ttk.Entry(
-            body, textvariable=self.time_spent_var, width=18, state="readonly"
-        ).grid(row=6, column=1, sticky="w", pady=4)
-
-        ttk.Label(body, text="Last worked").grid(
             row=7, column=0, sticky="w", padx=(0, 8), pady=4
         )
         ttk.Entry(
-            body, textvariable=self.last_worked_var, width=22, state="readonly"
+            body, textvariable=self.time_spent_var, width=18, state="readonly"
         ).grid(row=7, column=1, sticky="w", pady=4)
 
+        ttk.Label(body, text="Last worked").grid(
+            row=8, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        ttk.Entry(
+            body, textvariable=self.last_worked_var, width=22, state="readonly"
+        ).grid(row=8, column=1, sticky="w", pady=4)
+
         button_row = ttk.Frame(body)
-        button_row.grid(row=8, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        button_row.grid(row=9, column=0, columnspan=2, sticky="e", pady=(12, 0))
         ttk.Button(
             button_row,
             text="Cancel",
@@ -1234,10 +1251,14 @@ class TaskDialog(tk.Toplevel):
             self.completed_date_var.set("")
 
     def _on_save(self) -> None:
-        description = " ".join(self.description_text.get("1.0", "end").split())
+        raw_description = self.description_text.get("1.0", "end")
+        description = compose_task_description(
+            raw_description,
+            self.project_tags_var.get(),
+        )
         if not description:
             messagebox.showerror(
-                APP_TITLE, "Description cannot be empty.", parent=self
+                APP_TITLE, "Description or tags cannot be empty.", parent=self
             )
             return
         created = self.created_var.get().strip()
@@ -3891,11 +3912,7 @@ class TodoTimerApp:
 
     @staticmethod
     def task_text_without_projects(item: TodoItem) -> str:
-        return " ".join(
-            token
-            for token in item.description.split()
-            if token not in item.projects
-        )
+        return split_task_description_tags(item.description)[0]
 
     def update_tree_headings(self) -> None:
         for column in TREE_COLUMNS:
